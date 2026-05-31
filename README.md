@@ -23,15 +23,19 @@ that, your agent calls `ace_search` automatically at the start of a task — or 
 
 ## What this repo is
 
-This repo is the **marketplace manifest only**. The plugin source itself lives in
-the main project repo and is resolved automatically via a `git-subdir` source:
+This is the public distribution point for the ACE plugin: the marketplace
+manifest (`.claude-plugin/marketplace.json`) plus a bundled copy of the plugin
+under `plugins/ace/`. The registry, docs, and capsule tooling are developed in a
+separate repo.
 
-- Plugin source: [`ogiberstein/agent-context-exchange` → `plugins/ace/`](https://github.com/ogiberstein/agent-context-exchange/tree/main/plugins/ace)
-- Registry + docs: [`ogiberstein/agent-context-exchange`](https://github.com/ogiberstein/agent-context-exchange)
+- This repo: marketplace manifest + the installable plugin (`plugins/ace/`)
 - Web: [agentcontextexchange.com](https://agentcontextexchange.com)
 
-Keeping the manifest here and the code there means a single source of truth — the
-plugin is maintained in one place and this marketplace always points at it.
+`plugins/ace/` is a bundled copy synced from the development repo. It is the
+client-side plugin only (MCP server, hooks, slash-command skills) — no registry
+internals, no secrets. The plugin authenticates against the hosted registry at
+runtime and reads any founder publish key from `~/.ace/` on the local machine; no
+credentials are committed here.
 
 ## Status
 

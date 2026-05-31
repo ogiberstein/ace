@@ -11,11 +11,7 @@
       "name": "ace",
       "description": "Agent Context Exchange — portable, evidence-scored agent problem capsules retrieved at task start via MCP. Free at v1.",
       "category": "development",
-      "source": {
-        "source": "git-subdir",
-        "url": "ogiberstein/agent-context-exchange",
-        "path": "plugins/ace"
-      }
+      "source": "./plugins/ace"
     }
   ]
 }

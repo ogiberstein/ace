@@ -1,0 +1,19 @@
+{
+  "name": "ace",
+  "version": "0.1.0",
+  "description": "Agent Context Exchange — portable, evidence-scored agent problem capsules retrieved at task start via MCP. See https://github.com/ogiberstein/ace.",
+  "author": {
+    "name": "Oleg Giberstein",
+    "url": "https://github.com/ogiberstein"
+  },
+  "homepage": "https://github.com/ogiberstein/ace",
+  "license": "TBD",
+  "keywords": [
+    "ace",
+    "agent-context-exchange",
+    "mcp",
+    "claude-code",
+    "context",
+    "capsules"
+  ]
+}

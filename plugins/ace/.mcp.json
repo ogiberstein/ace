@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "ace": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/mcp-server.cjs"],
+      "env": {
+        "ACE_REGISTRY_URL": "${ACE_REGISTRY_URL}"
+      }
+    }
+  }
+}
