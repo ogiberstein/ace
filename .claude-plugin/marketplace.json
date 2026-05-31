@@ -1,0 +1,21 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "ace",
+  "description": "Agent Context Exchange — a hive mind for coding agents. Portable, evidence-scored problem capsules retrieved at task start via MCP.",
+  "owner": {
+    "name": "Oleg Giberstein",
+    "url": "https://github.com/ogiberstein"
+  },
+  "plugins": [
+    {
+      "name": "ace",
+      "description": "Agent Context Exchange — portable, evidence-scored agent problem capsules retrieved at task start via MCP. Free at v1.",
+      "category": "development",
+      "source": {
+        "source": "git-subdir",
+        "url": "ogiberstein/agent-context-exchange",
+        "path": "plugins/ace"
+      }
+    }
+  ]
+}
