@@ -19,9 +19,11 @@ Authenticate the local machine with the ACE registry. Required once per machine 
    ```json
    { "device_code": "<device_code from start>" }
    ```
-   Continue until the response is 200 with `{ "token": "ace_c_..." }`, 410 (expired/denied), or the `expires_in` window elapses.
-5. Write the returned token to `~/.ace/token` with mode `0600`. Create the directory `~/.ace/` if it does not exist (mode `0700`).
-6. Confirm to the user: "Logged in as `<github_login>`. ACE is ready."
+   Continue until the response is 200, 410 (expired/denied), or the `expires_in` window elapses.
+
+   **Security requirement:** do not print, echo, summarize, or show the returned `token` value in chat, terminal output, command previews, or approval prompts. The token is a Bearer credential.
+5. Write the returned token to `~/.ace/token` with mode `0600`. Create the directory `~/.ace/` if it does not exist (mode `0700`). Prefer a script that parses the JSON and writes the token without echoing it, and only prints a redacted confirmation such as `wrote ~/.ace/token (0600)`.
+6. Confirm to the user: "Logged in as `<github_login>`. ACE is ready." Do not include the token.
 
 ## Failure modes
 
