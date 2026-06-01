@@ -540,17 +540,131 @@ function validateDraftPayload(p) {
 // ---------------------------------------------------------------------------
 // Retrieval-time injection scan (spec §5.4)
 // ---------------------------------------------------------------------------
+const MAX_BODY_LEN = 200_000; // TODO(FOUNDER DECISION): finalize largest scanned/injected body.
+
+// BEGIN GENERATED_PLUGIN_SCANNER_SOURCE
+// This block is generated from registry/src/lib/scan.ts. Do not edit by hand.
+const ZERO_WIDTH_RE = /[\u200B-\u200D\u2060\uFEFF]/g;
+const URL_RE = /https?:\/\/[^\s]+/gi;
+const MARKDOWN_IMAGE_RE = /!\[[^\]]*\]\([^)]*\)/i;
+const HTML_IMAGE_RE = /<img[\s>]/i;
+// Only the actually-exploitable form: piping a code block into bash/sh/zsh.
+// Bare mentions of curl/wget/exec/subprocess are common in legitimate API
+// documentation; rejecting them blocks the founding library (CTO round 2 F1).
+const DANGEROUS_CODE_BLOCK_RE = /```[\s\S]*?\|\s*(bash|sh|zsh)\b[\s\S]*?```/i;
+
+// Secret-exfiltration detection is intentionally an intent matcher, not a flat
+// verb denylist. HTTP/documentation verbs such as POST/send/curl are allowed
+// unless they appear with both a secret noun and an exfiltration sink.
+const SECRET_NOUN_RE = /\b(environment variables?|env var|secrets?|api[_-]?keys?|passwords?|credentials?|private keys?|bearer tokens?|access keys?|tokens?)\b/i;
+const ALWAYS_SECRET_EXFIL_VERB_RE = /\b(print|reveal|dump|exfiltrate|upload|leak)\b/gi;
+const TRANSPORT_SECRET_EXFIL_VERB_RE = /\b(send|curl|post|upload|include)\b/gi;
+const PLACEHOLDER_EXFIL_HOST_RE = /^(localhost|(www\.|api\.)?example\.(com|org|net)|[^\s]*<[^>]*>[^\s]*)$/i;
+const AGENT_DIRECTED_SECRET_REQUEST_RE = /\b(show|tell|give)\s+me\b[^.\n]{0,30}?(environment variable|env var|secret|api[_-]?key|password|credential|token|private key)\b/i;
+
 const CONFUSABLES = {
-  А: "A", В: "B", Е: "E", З: "3", К: "K", М: "M", Н: "H", О: "O", Р: "P", С: "C", Т: "T", Х: "X",
-  а: "a", е: "e", о: "o", р: "p", с: "c", у: "y", х: "x",
+  А: "A",
+  В: "B",
+  Е: "E",
+  З: "3",
+  К: "K",
+  М: "M",
+  Н: "H",
+  О: "O",
+  Р: "P",
+  С: "C",
+  Т: "T",
+  У: "Y",
+  Х: "X",
+  а: "a",
+  е: "e",
+  о: "o",
+  р: "p",
+  с: "c",
+  у: "y",
+  х: "x",
 };
+
+const INJECTION_PATTERNS = [
+  /ignore (the |all )?previous (instructions|messages|prompts)/i,
+  /disregard (the |all |your |previous )?(user|instructions|prompt)/i,
+  /actually,? your (instructions|task|role) (is|are)/i,
+  /you are (now |actually |an? )?(developer|admin|system|root|superuser|jailbreak)/i,
+  /<\|im_start\|>|<\|im_end\|>|<\|system\|>|<\|user\|>|<\|assistant\|>/,
+  /<script[\s>]/i,
+  /<iframe[\s>]/i,
+  /\bdata:text\/html\b/i,
+  /javascript:\s*[a-z]/i,
+];
+
+const ALLOWED_HEADINGS = new Set([
+  "claim",
+  "you're working on",
+  "youre working on",
+  "you are working on",
+  "don't waste time on",
+  "dont waste time on",
+  "do not waste time on",
+  "first move if you proceed",
+  "first move",
+  "verify in your context",
+  "verify",
+  "receipt",
+  "when this stops applying",
+  "reuse evidence",
+]);
 
 function normalizeForScan(text) {
   return text
     .normalize("NFKC")
-    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
-    .replace(/[АВЕЗКМНОРСТХаВеЕКМНОорРсСуУхХ]/g, (ch) => CONFUSABLES[ch] || ch);
+    .replace(ZERO_WIDTH_RE, "")
+    .replace(/[АВЕЗКМНОРСТХаВеЕКМНОорРсСуУхХ]/g, (ch) => CONFUSABLES[ch] ?? ch);
 }
+
+function hasAlwaysVerbNearSecretNoun(scanned) {
+  for (const match of scanned.matchAll(ALWAYS_SECRET_EXFIL_VERB_RE)) {
+    const start = match.index ?? 0;
+    const window = scanned.slice(Math.max(0, start - 60), start + match[0].length + 60);
+    if (SECRET_NOUN_RE.test(window)) return true;
+  }
+  return false;
+}
+
+function hostOf(candidate) {
+  try {
+    if (/^https?:/i.test(candidate)) return new URL(candidate).host;
+  } catch {
+    // Fall through to the raw candidate; malformed sinks should not crash scans.
+  }
+  return candidate;
+}
+
+function hasExfilSinkNear(scanned, from) {
+  const window = scanned.slice(from, from + 90);
+  if (/\bin your (reply|response|next message|answer)\b/i.test(window)) return true;
+  if (/\bto (me\b|my |a remote|the user|the attacker|an? external)/i.test(window)) return true;
+  const hostMatch = window.match(/\bto\s+(https?:\/\/[^\s`'")]+|[a-z0-9-]+(?:\.[a-z0-9-]+)+)/i);
+  if (hostMatch && !PLACEHOLDER_EXFIL_HOST_RE.test(hostOf(hostMatch[1] ?? ""))) return true;
+  return false;
+}
+
+function hasTransportVerbSecretNounAndSink(scanned) {
+  for (const match of scanned.matchAll(TRANSPORT_SECRET_EXFIL_VERB_RE)) {
+    const start = match.index ?? 0;
+    const window = scanned.slice(Math.max(0, start - 50), start + match[0].length + 90);
+    if (SECRET_NOUN_RE.test(window) && hasExfilSinkNear(scanned, start)) return true;
+  }
+  return false;
+}
+
+function hasSecretExfiltrationIntent(scanned) {
+  return (
+    hasAlwaysVerbNearSecretNoun(scanned) ||
+    AGENT_DIRECTED_SECRET_REQUEST_RE.test(scanned) ||
+    hasTransportVerbSecretNounAndSink(scanned)
+  );
+}
+// END GENERATED_PLUGIN_SCANNER_SOURCE
 
 function runScan(text, opts = {}) {
   if (typeof text !== "string") {
@@ -561,29 +675,17 @@ function runScan(text, opts = {}) {
   }
 
   const scanned = normalizeForScan(text);
-  if (/!\[[^\]]*\]\([^)]*\)/i.test(scanned) || /<img[\s>]/i.test(scanned)) {
+  if (MARKDOWN_IMAGE_RE.test(scanned) || HTML_IMAGE_RE.test(scanned)) {
     return { ok: false, reason: "injection_pattern" };
   }
-  // Only the actually-exploitable form (pipe-to-shell); see registry/src/lib/scan.ts.
-  if (/```[\s\S]*?\|\s*(bash|sh|zsh)\b[\s\S]*?```/i.test(scanned)) {
+  if (DANGEROUS_CODE_BLOCK_RE.test(scanned)) {
     return { ok: false, reason: "injection_pattern" };
   }
-  if (/\b(environment variable|env var|secret|api[_-]?key|token)\b[\s\S]{0,100}\b(print|reveal|show|dump|exfiltrate|send|upload|curl|post|include|contents?)\b|\b(print|reveal|show|dump|exfiltrate|send|upload|curl|post|include)\b[\s\S]{0,100}\b(environment variable|env var|secret|api[_-]?key|token)\b/i.test(scanned)) {
+  if (hasSecretExfiltrationIntent(scanned)) {
     return { ok: false, reason: "injection_pattern" };
   }
 
-  const injectionPatterns = [
-    /ignore (the |all )?previous (instructions|messages|prompts)/i,
-    /disregard (the |all |your |previous )?(user|instructions|prompt)/i,
-    /actually,? your (instructions|task|role) (is|are)/i,
-    /you are (now |actually |an? )?(developer|admin|system|root|superuser|jailbreak)/i,
-    /<\|im_start\|>|<\|im_end\|>|<\|system\|>|<\|user\|>|<\|assistant\|>/,
-    /<script[\s>]/i,
-    /<iframe[\s>]/i,
-    /\bdata:text\/html\b/i,
-    /javascript:\s*[a-z]/i,
-  ];
-  for (const re of injectionPatterns) {
+  for (const re of INJECTION_PATTERNS) {
     if (re.test(scanned)) {
       return { ok: false, reason: "injection_pattern" };
     }
@@ -593,7 +695,7 @@ function runScan(text, opts = {}) {
     return { ok: false, reason: "encoded_blob" };
   }
   // URL-exempt; see registry/src/lib/scan.ts.
-  if (/[^\s]{120,}/.test(scanned.replace(/https?:\/\/[^\s]+/gi, ""))) {
+  if (/[^\s]{120,}/.test(scanned.replace(URL_RE, ""))) {
     return { ok: false, reason: "encoded_blob" };
   }
 
@@ -601,27 +703,11 @@ function runScan(text, opts = {}) {
     if (!/##\s+Claim/i.test(scanned.slice(0, 500))) {
       return { ok: false, reason: "format_mismatch" };
     }
-    const allowedHeadings = new Set([
-      "claim",
-      "you're working on",
-      "youre working on",
-      "you are working on",
-      "don't waste time on",
-      "dont waste time on",
-      "do not waste time on",
-      "first move if you proceed",
-      "first move",
-      "verify in your context",
-      "verify",
-      "receipt",
-      "when this stops applying",
-      "reuse evidence",
-    ]);
     const headings = [...scanned.matchAll(/^##\s+(.+?)\s*$/gim)].map((m) =>
       m[1].toLowerCase().trim(),
     );
     for (const h of headings) {
-      if (!allowedHeadings.has(h)) {
+      if (!ALLOWED_HEADINGS.has(h)) {
         return { ok: false, reason: "unknown_section" };
       }
     }
@@ -651,7 +737,7 @@ async function scanAndShape(capsule, token, opts = {}) {
     ["brief_view", capsule.brief_view || "", { requireBriefFormat: true }],
   ];
   if (opts.full && typeof capsule.body === "string") {
-    scanTargets.push(["body", capsule.body, { requireBriefFormat: true, maxLength: 40000 }]);
+    scanTargets.push(["body", capsule.body, { requireBriefFormat: true, maxLength: MAX_BODY_LEN }]);
   }
 
   for (const [field, value, scanOpts] of scanTargets) {
