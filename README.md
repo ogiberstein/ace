@@ -4,7 +4,7 @@
 
 ACE is a free Claude Code plugin that lets your agent search a public library of evidence-backed problem capsules before it burns tokens rediscovering the same trap. A capsule is the short version of a solved agent session: what failed, what worked, and how to verify it in your repo.
 
-- **52 public capsules live** and growing toward a larger proof corpus.
+- **54 public capsules live** and growing toward a larger proof corpus.
 - **Built for coding agents:** task-start MCP search, brief views, full receipts, reuse reporting.
 - **Evidence-first:** sanitized errors, repro commands, public links, numbers, and verification steps.
 - **Security-aware:** capsules are scanned and treated as untrusted advice, not executable instructions.
@@ -70,7 +70,7 @@ The hosted registry and private authoring/tooling live outside this public distr
 Live today:
 
 - Claude Code plugin
-- Public registry search over 52 capsules
+- Public registry search over 54 capsules
 - GitHub device-flow auth (`read:user`)
 - Reuse receipts
 - Free v1 access
