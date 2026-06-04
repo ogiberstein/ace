@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// ACE MCP server. Implements 4 tools per spec §6.2:
-//   ace_search, ace_get, ace_report_reuse, ace_list_recent
+// ACE MCP server. Retrieval sessions advertise only ace_search +
+// ace_report_reuse by default to keep tool-schema overhead low. Authoring /
+// browsing tools are hidden unless explicitly enabled by env flags.
 //
 // Reads ~/.ace/token (consumer Bearer) on first use; returns ace_warning if
 // missing so the agent prompts the user to run /ace-login.
@@ -35,6 +36,11 @@ const TOKEN_FILE = envOrDefault(process.env.ACE_TOKEN_FILE, path.join(os.homedir
 // Founder publish key. Only present on the founder's machine; ace_publish /
 // ace_promote are inert (return a founder-only error) without it.
 const PUBLISH_KEY_FILE = envOrDefault(process.env.ACE_PUBLISH_KEY_FILE, path.join(os.homedir(), ".ace", "publish_key"));
+const DEFAULT_SEARCH_LIMIT = 3;
+const MAX_SEARCH_LIMIT = 10;
+const MAX_BRIEF_CHARS = 3200; // approx. 500–800 tokens, depending on content.
+const EXPOSE_GET = /^(1|true|yes)$/i.test(process.env.ACE_EXPOSE_GET || "");
+const AUTHORING_MODE = /^(1|true|yes)$/i.test(process.env.ACE_AUTHORING_MODE || "");
 
 // ---------------------------------------------------------------------------
 // JSON-RPC framing
@@ -98,7 +104,7 @@ async function handle(msg) {
     return send({
       jsonrpc: "2.0",
       id: msg.id,
-      result: { tools: TOOL_DEFS },
+      result: { tools: getToolDefs() },
     });
   }
 
@@ -128,7 +134,7 @@ async function handle(msg) {
 // ---------------------------------------------------------------------------
 // Tool definitions (advertised on tools/list)
 // ---------------------------------------------------------------------------
-const TOOL_DEFS = [
+const ALL_TOOL_DEFS = [
   {
     name: "ace_search",
     description:
@@ -142,9 +148,9 @@ const TOOL_DEFS = [
         },
         limit: {
           type: "integer",
-          description: "Max results (default 5, max 25).",
+          description: "Max results (default 3, max 10).",
           minimum: 1,
-          maximum: 25,
+          maximum: 10,
         },
       },
       required: ["query"],
@@ -222,6 +228,17 @@ const TOOL_DEFS = [
   },
 ];
 
+function getToolDefs() {
+  const names = new Set(["ace_search", "ace_report_reuse"]);
+  if (EXPOSE_GET || AUTHORING_MODE) names.add("ace_get");
+  if (AUTHORING_MODE) {
+    names.add("ace_list_recent");
+    names.add("ace_publish");
+    names.add("ace_promote");
+  }
+  return ALL_TOOL_DEFS.filter((tool) => names.has(tool.name));
+}
+
 // ---------------------------------------------------------------------------
 // Tool implementations
 // ---------------------------------------------------------------------------
@@ -246,7 +263,7 @@ async function callTool(name, args) {
 async function aceSearch(token, args) {
   const q = String(args.query || "").trim();
   if (!q) return aceError("query required", "invalid_request");
-  const limit = clampInt(args.limit, 5, 1, 25);
+  const limit = clampInt(args.limit, DEFAULT_SEARCH_LIMIT, 1, MAX_SEARCH_LIMIT);
   const url = `${REGISTRY_URL}/v1/capsules?q=${encodeURIComponent(q)}&limit=${limit}`;
   const resp = await registryFetch(url, token);
   if (resp.error) return resp.error;
@@ -560,7 +577,7 @@ const SECRET_NOUN_RE = /\b(environment variables?|env var|secrets?|api[_-]?keys?
 const ALWAYS_SECRET_EXFIL_VERB_RE = /\b(print|reveal|dump|exfiltrate|upload|leak)\b/gi;
 const TRANSPORT_SECRET_EXFIL_VERB_RE = /\b(send|curl|post|upload|include)\b/gi;
 const PLACEHOLDER_EXFIL_HOST_RE = /^(localhost|(www\.|api\.)?example\.(com|org|net)|[^\s]*<[^>]*>[^\s]*)$/i;
-const AGENT_DIRECTED_SECRET_REQUEST_RE = /\b(show|tell|give)\s+me\b[^.\n]{0,30}?(environment variable|env var|secret|api[_-]?key|password|credential|token|private key)\b/i;
+const AGENT_DIRECTED_SECRET_REQUEST_RE = /(?:\b(show|tell|give)\s+me\b[^.\n]{0,30}?|\binclude\b[^.\n]{0,40}?\b(contents?\s+of\s+)?(?:any\s+)?)(environment variable|env var|secret|api[_-]?key|password|credential|token|private key)\b/i;
 
 const CONFUSABLES = {
   А: "A",
@@ -752,7 +769,32 @@ async function scanAndShape(capsule, token, opts = {}) {
     }
   }
 
-  return capsule;
+  return shapeCapsuleForRetrieval(capsule, opts);
+}
+
+function trimTextForBrief(text) {
+  const raw = String(text || "");
+  if (raw.length <= MAX_BRIEF_CHARS) return { text: raw, truncated: false };
+  const cut = raw.slice(0, MAX_BRIEF_CHARS);
+  const boundary = Math.max(cut.lastIndexOf("\n## "), cut.lastIndexOf("\n- "), cut.lastIndexOf("\n"));
+  const trimmed = (boundary > 1200 ? cut.slice(0, boundary) : cut).trimEnd();
+  return {
+    text: `${trimmed}\n\n[ACE brief truncated to ${MAX_BRIEF_CHARS} chars; use ace_get on demand only if the full receipt is necessary.]`,
+    truncated: true,
+  };
+}
+
+function shapeCapsuleForRetrieval(capsule, opts = {}) {
+  if (opts.full) return capsule;
+  const shaped = { ...capsule };
+  if (typeof shaped.body === "string") delete shaped.body;
+  if (typeof shaped.full_body_md === "string") delete shaped.full_body_md;
+  if (typeof shaped.brief_view === "string") {
+    const { text, truncated } = trimTextForBrief(shaped.brief_view);
+    shaped.brief_view = text;
+    if (truncated) shaped.ace_note = "brief_truncated";
+  }
+  return shaped;
 }
 
 function reportScanFailure(capsuleId, reason, token) {
@@ -920,6 +962,13 @@ if (process.argv.includes("--selftest")) {
       if (ok) passed++;
     }
     console.log(`\n${passed}/${cases.length} scan cases pass`);
-    process.exit(passed === cases.length ? 0 : 1);
+    const retrievalTools = getToolDefs().map((tool) => tool.name).sort();
+    const expectedRetrievalTools = ["ace_report_reuse", "ace_search"];
+    const toolTableOk = JSON.stringify(retrievalTools) === JSON.stringify(expectedRetrievalTools);
+    console.log(`${toolTableOk ? "PASS" : "FAIL"} retrieval tool table got=${JSON.stringify(retrievalTools)}`);
+    const trimmed = shapeCapsuleForRetrieval({ id: "capsule-20260604-test", brief_view: "## Claim\n" + "x".repeat(MAX_BRIEF_CHARS + 100), body: "full" });
+    const trimOk = trimmed.brief_view.length < MAX_BRIEF_CHARS + 220 && trimmed.ace_note === "brief_truncated" && trimmed.body === undefined;
+    console.log(`${trimOk ? "PASS" : "FAIL"} brief-only shaping`);
+    process.exit(passed === cases.length && toolTableOk && trimOk ? 0 : 1);
   })();
 }
