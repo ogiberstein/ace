@@ -577,7 +577,7 @@ const SECRET_NOUN_RE = /\b(environment variables?|env var|secrets?|api[_-]?keys?
 const ALWAYS_SECRET_EXFIL_VERB_RE = /\b(print|reveal|dump|exfiltrate|upload|leak)\b/gi;
 const TRANSPORT_SECRET_EXFIL_VERB_RE = /\b(send|curl|post|upload|include)\b/gi;
 const PLACEHOLDER_EXFIL_HOST_RE = /^(localhost|(www\.|api\.)?example\.(com|org|net)|[^\s]*<[^>]*>[^\s]*)$/i;
-const AGENT_DIRECTED_SECRET_REQUEST_RE = /(?:\b(show|tell|give)\s+me\b[^.\n]{0,30}?|\binclude\b[^.\n]{0,40}?\b(contents?\s+of\s+)?(?:any\s+)?)(environment variable|env var|secret|api[_-]?key|password|credential|token|private key)\b/i;
+const AGENT_DIRECTED_SECRET_REQUEST_RE = /(?:\b(show|tell|give)\s+me\b[^.\n]{0,30}?|\binclude\b[^.\n]{0,20}?\bcontents?\s+of\s+(?:any\s+)?)(environment variable|env var|secret|api[_-]?key|password|credential|token|private key)\b/i;
 
 const CONFUSABLES = {
   А: "A",
