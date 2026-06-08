@@ -226,6 +226,23 @@ const ALL_TOOL_DEFS = [
       required: ["id"],
     },
   },
+  {
+    name: "ace_submit",
+    description:
+      "Authoring-mode only. Submit a scrubbed capsule draft to ACE for Hermes review and founder approval. Shows explicit consent before use; never auto-publishes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        draft_path: { type: "string", description: "Path to the scrubbed draft .md file." },
+      },
+      required: ["draft_path"],
+    },
+  },
+  {
+    name: "ace_submissions",
+    description: "Authoring-mode only. List your ACE submission statuses.",
+    inputSchema: { type: "object", properties: {} },
+  },
 ];
 
 function getToolDefs() {
@@ -235,6 +252,8 @@ function getToolDefs() {
     names.add("ace_list_recent");
     names.add("ace_publish");
     names.add("ace_promote");
+    names.add("ace_submit");
+    names.add("ace_submissions");
   }
   return ALL_TOOL_DEFS.filter((tool) => names.has(tool.name));
 }
@@ -256,6 +275,8 @@ async function callTool(name, args) {
   if (name === "ace_get") return await aceGet(token, args);
   if (name === "ace_report_reuse") return await aceReportReuse(token, args);
   if (name === "ace_list_recent") return await aceListRecent(token, args);
+  if (name === "ace_submit") return await aceSubmit(token, args);
+  if (name === "ace_submissions") return await aceSubmissions(token);
 
   return aceError(`unknown tool: ${name}`, "invalid_request");
 }
@@ -315,6 +336,38 @@ async function aceListRecent(token, args) {
     results.map((r) => scanAndShape(r, token)),
   );
   return { results: scanned };
+}
+
+async function aceSubmit(token, args) {
+  const draftPath = String(args.draft_path || "");
+  if (!draftPath) return aceError("draft_path required", "invalid_request");
+  let raw;
+  try {
+    raw = fs.readFileSync(draftPath, "utf8");
+  } catch (err) {
+    return aceError(`cannot read draft at ${draftPath}: ${err.message}`, "invalid_request");
+  }
+  let payload;
+  try {
+    payload = draftToPayload(parseDraft(raw));
+  } catch (err) {
+    return aceError(`draft parse failed: ${err.message}`, "invalid_request");
+  }
+  const validationError = validateDraftPayload(payload);
+  if (validationError) return aceError(validationError, "invalid_request");
+  payload.consent_at = new Date().toISOString();
+  const resp = await registryFetch(`${REGISTRY_URL}/v1/submissions`, token, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  if (resp.error) return resp.error;
+  return resp.body;
+}
+
+async function aceSubmissions(token) {
+  const resp = await registryFetch(`${REGISTRY_URL}/v1/submissions/mine`, token);
+  if (resp.error) return resp.error;
+  return resp.body;
 }
 
 // ---------------------------------------------------------------------------

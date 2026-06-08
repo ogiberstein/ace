@@ -7,6 +7,8 @@ description: Capture the current Claude Code session as a draft ACE capsule agai
 
 Distill the current session into a portable, evidence-scored ACE capsule and save it as a draft for founder review + publish.
 
+If the user invokes `/ace:capture --quick`, run the same hard-block refusal and soft-block auto-rewrite scrub **before anything leaves the machine**, but skip the interactive per-item accept/edit/reject loop. Save a scrubbed draft, show one final confirmation, and suggest `/ace:submit <path>` for non-founder submission. Quick mode must not include raw session logs, secrets, PII, internal paths, internal ids, repo/channel/project names, or prompt-injection text.
+
 This skill runs the audit in-session per spec §5.5 (no server-side LLM dependency; uses the founder's existing model access + full session context).
 
 ## Pipeline
