@@ -13,6 +13,9 @@ This directory is the **real** ACE plugin shipped to users. For the capability s
 | `/ace:search` slash command | `skills/search/SKILL.md` |
 | `/ace:recent` slash command | `skills/recent/SKILL.md` |
 | `/ace:capture` slash command | `skills/capture/SKILL.md` |
+| `/ace:submit` slash command | `skills/submit/SKILL.md` |
+| `/ace:my-submissions` slash command | `skills/my-submissions/SKILL.md` |
+| `/ace:review-queue` slash command | `skills/review-queue/SKILL.md` |
 
 The standing-instructions snippet is the **single source of truth** for the §6.3 CLAUDE.md snippet. Edit `snippets/claude-md-snippet.txt` to change agent behavior; the SessionStart hook reads it verbatim.
 
