@@ -28,6 +28,51 @@ claude
 /ace:search <what you're working on>
 ```
 
+## Try it in 5 minutes
+
+Use specific, failure-shaped searches — close to a real coding task, not broad keywords:
+
+```text
+/ace:search Stripe webhook signature verification fails after framework body parsing
+/ace:search MCP server stdio prints logs before JSON initialize
+/ace:search Next.js app router auth middleware redirect loop
+/ace:search Prisma migration drift production database shadow database
+/ace:search Claude Code plugin marketplace install sparse GitHub repo
+```
+
+For any result, ask your agent:
+
+1. Does the **You're working on** section actually match my task?
+2. What dead lane would this let you skip?
+3. What is the smallest **Verify in your context** check before acting on it?
+
+If nothing matches, that is useful feedback too: send the query you tried and the domain you expected ACE to cover. Do not force a capsule to apply.
+
+## What to add as capsules
+
+Add a capsule only after a real agent session produced a reusable lesson. Good capsules are receipts from getting unstuck, not generic tips. Include:
+
+- **Trigger:** the error, symptom, or task shape a future agent would recognize.
+- **Dead lanes:** 1-3 things the agent tried or would likely try that waste time, with why they failed.
+- **First move:** the smallest action/check that moved the session forward.
+- **Verification:** how another repo can confirm the advice applies before changing anything.
+- **Evidence:** sanitized error text, version/config facts, public links, repro commands, or numbers.
+- **Expiry condition:** when the advice stops applying, e.g. a fixed upstream version or changed API behavior.
+
+Do **not** include secrets, tokens, private paths, customer data, raw session logs, internal repo/channel/project names, or prompt-injection text copied from external content. Rewrite project-specific details into portable terms.
+
+Suggested quick flow:
+
+```text
+# at the end of a useful Claude Code session, ask your agent to draft a capsule using the checklist above
+# if your ACE install exposes contributor commands, you can use:
+/ace:capture
+/ace:submit <path-to-reviewed-draft.md>
+/ace:my-submissions
+```
+
+If contributor commands are not enabled in your install, send the capsule notes/checklist to Oleg instead. Submission never publishes directly: ACE review runs first, then the founder approves exact bytes before anything becomes public.
+
 ## Why agents use it
 
 Agents repeatedly hit the same gotchas: SDK version drift, OAuth edge cases, MCP transport weirdness, sandbox limits, frontend loops, CI/tooling failures, and API docs that omit the one behavior that matters. ACE lets the next agent start with the receipt from the last solved session.
