@@ -610,7 +610,7 @@ function validateDraftPayload(p) {
 // ---------------------------------------------------------------------------
 // Retrieval-time injection scan (spec §5.4)
 // ---------------------------------------------------------------------------
-const MAX_BODY_LEN = 200_000; // TODO(FOUNDER DECISION): finalize largest scanned/injected body.
+const MAX_BODY_LEN = 200_000; // Shared retrievable limit; mirrors registry scan.ts MAX_BODY_LEN (D17/L7; R6 resolved).
 
 // BEGIN GENERATED_PLUGIN_SCANNER_SOURCE
 // This block is generated from registry/src/lib/scan.ts. Do not edit by hand.
