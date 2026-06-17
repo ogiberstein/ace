@@ -1,11 +1,11 @@
 ---
 name: search
-description: Explicit ACE search invocation. Same as the SessionStart-instructed implicit call, but user-triggered. Useful for re-checking a domain mid-task.
+description: Explicit ACE search invocation. In Claude Code the SessionStart hook calls ace_search implicitly; in OpenAI Codex and other MCP hosts (no SessionStart hook) use this to search explicitly. Also for re-checking a domain mid-task.
 ---
 
 # /ace:search
 
-Explicit search of the ACE registry. The SessionStart hook already instructs you to call `ace_search` implicitly before non-trivial tasks; this slash command is for cases where the user wants to re-search mid-session or test the integration.
+Explicit search of the ACE registry. In Claude Code, the SessionStart hook already instructs you to call `ace_search` implicitly before non-trivial tasks. In OpenAI Codex (and other MCP hosts without a SessionStart hook) there is no implicit call, so calling `ace_search` — via this command or directly — is how you search. Also use it to re-search mid-session or test the integration.
 
 ## Usage
 

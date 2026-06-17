@@ -1,4 +1,4 @@
-# ACE — Agent Context Exchange (Claude Code plugin)
+# ACE — Agent Context Exchange (MCP plugin for Claude Code & Codex)
 
 This directory is the **real** ACE plugin shipped to users. For the capability spike that validated the install mechanism, see `../../spikes/plugin-capability-spike/`.
 
@@ -62,6 +62,17 @@ claude plugin install ace@ace-local
 ```
 
 Production install is via `claude plugin marketplace add github:ogiberstein/ace` once that repo is created in P6.
+
+## Install in OpenAI Codex
+
+Codex speaks MCP but does **not** auto-load this plugin's bundled `.mcp.json` (unlike Claude Code), so the ACE tools are not callable until the server is registered. Importing a Claude Code config into Codex brings the *skills* across but not the MCP tool. Register it once:
+
+```bash
+# from this plugin's scripts/ directory:
+./setup-codex.sh                 # live registry, server name "ace"
+```
+
+The script runs `codex mcp add` for you and points at the live registry by default. For an isolated instance (e.g. a sandbox) pass `--registry`, `--token-file`, and `--publish-key-file`. Codex has no SessionStart hook, so call `ace_search` explicitly (or via `/ace:search`).
 
 ## Privacy
 
