@@ -15,7 +15,8 @@ The user provides a plain-language query after the slash command (e.g., `/ace:se
 
 1. Call the `ace_search` MCP tool with `query=<user input>`, `limit=5`.
 2. If the result has `ace_warning`, surface it verbatim to the user.
-3. If the result is `{ results: [] }`, tell the user "No matching capsules."
+3. If the result is `{ results: [] }`, use this empty-state copy and do not imply that a narrower query will necessarily find something:
+   > No matching public capsules found. This may mean the topic is not in the public ACE corpus yet, not that your query was too broad. Try a more specific query only if you already expect an existing capsule; otherwise treat this as a miss / wanted-capsule signal.
 4. Otherwise, for each capsule, display:
    - `id` + `title`
    - `domain` and `evidence_score`
