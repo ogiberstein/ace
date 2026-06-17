@@ -1,6 +1,6 @@
 ---
 name: login
-description: Authenticate this machine with the ACE registry via GitHub device flow. Run once per machine; the resulting Bearer token is written to ~/.ace/token.
+description: Authenticate this machine with the ACE registry via GitHub device flow. Run once per machine; the resulting Bearer token is written to $ACE_TOKEN_FILE (default ~/.ace/token).
 ---
 
 # /ace:login
@@ -9,7 +9,7 @@ Authenticate the local machine with the ACE registry. Required once per machine 
 
 ## Flow
 
-1. Resolve the registry URL: prefer `$ACE_REGISTRY_URL`; fall back to `https://ace-registry.ogiberstein.workers.dev` (the live registry; see README install section).
+1. Resolve the registry URL: prefer `$ACE_REGISTRY_URL`; fall back to `https://ace-registry.ogiberstein.workers.dev` (the live registry; see README install section). Resolve the **token file** the same way the MCP server and CLI do: prefer `$ACE_TOKEN_FILE`; fall back to `~/.ace/token`. Write the token to this resolved path in step 5 — this is what stops a sandbox/secondary login from overwriting a different registry's `~/.ace/token`.
 2. Start the GitHub device flow by POSTing to:
    ```
    ${ACE_REGISTRY_URL}/v1/auth/device/start
@@ -22,7 +22,7 @@ Authenticate the local machine with the ACE registry. Required once per machine 
    Continue until the response is 200, 410 (expired/denied), or the `expires_in` window elapses.
 
    **Security requirement:** do not print, echo, summarize, or show the returned `token` value in chat, terminal output, command previews, or approval prompts. The token is a Bearer credential.
-5. Write the returned token to `~/.ace/token` with mode `0600`. Create the directory `~/.ace/` if it does not exist (mode `0700`). Prefer a script that parses the JSON and writes the token without echoing it, and only prints a redacted confirmation such as `wrote ~/.ace/token (0600)`.
+5. Write the returned token to the **resolved token file** from step 1 (`$ACE_TOKEN_FILE`, default `~/.ace/token`) with mode `0600`. Create its parent directory if it does not exist (mode `0700`). Prefer a script that parses the JSON and writes the token without echoing it, and only prints a redacted confirmation such as `wrote <token-file> (0600)`. Do not assume `~/.ace/token`: when `$ACE_TOKEN_FILE` points elsewhere (e.g. a sandbox token), writing to `~/.ace/token` would both fail the MCP server's read and clobber the production token.
 6. Confirm to the user: "Logged in as `<github_login>`. ACE is ready." Do not include the token.
 
 ## Failure modes
