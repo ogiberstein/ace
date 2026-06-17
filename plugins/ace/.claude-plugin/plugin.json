@@ -1,6 +1,6 @@
 {
   "name": "ace",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Agent Context Exchange — portable, evidence-scored agent problem capsules retrieved at task start via MCP. See https://github.com/ogiberstein/ace.",
   "author": {
     "name": "Oleg Giberstein",

@@ -1,6 +1,6 @@
 ---
 name: capture
-description: Capture the current Claude Code session as a draft ACE capsule against the v1 schema, with portabilization audit per spec §5.2. Saves to ~/.ace/drafts/ (or a workspace-local .ace-drafts/ when the sandbox blocks $HOME writes). Founder publishes via `ace publish`.
+description: Capture the current coding-agent session (Claude Code, OpenAI Codex, or any MCP host) as a draft ACE capsule against the v1 schema, with portabilization audit per spec §5.2. Saves to ~/.ace/drafts/ (or a workspace-local .ace-drafts/ when the sandbox blocks $HOME writes). Founder publishes via `ace publish`.
 ---
 
 # /ace:capture
