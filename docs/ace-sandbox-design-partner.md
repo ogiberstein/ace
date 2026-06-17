@@ -87,10 +87,17 @@ Codex speaks MCP, but it does **not** auto-load a plugin's bundled MCP server. I
 
 ## Login and use
 
-Inside Claude Code:
+First, in the shell you will launch Claude Code from, export the sandbox env so `/ace:login` writes the consumer token to the **sandbox** file (not your production `~/.ace/token`):
 
-1. Run `/ace:login`.
-2. Confirm it writes the consumer token to `~/.ace/sandbox-token`.
+```bash
+export ACE_REGISTRY_URL=https://ace-sandbox.ogiberstein.workers.dev
+export ACE_TOKEN_FILE=~/.ace/sandbox-token
+```
+
+Then launch Claude Code from that shell. Inside it:
+
+1. Run `/ace:login` (requires ACE plugin ≥ 0.1.5, which honors `ACE_TOKEN_FILE`).
+2. Confirm it writes the consumer token to `~/.ace/sandbox-token` — your production `~/.ace/token` stays untouched.
 3. Use `/ace:search` to search sandbox capsules.
 4. Use `/ace:capture` to draft a capsule.
 5. Use `/ace:publish` or the `ace_publish` MCP tool to publish into the sandbox.
