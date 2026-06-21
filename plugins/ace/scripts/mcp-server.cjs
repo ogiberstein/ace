@@ -484,38 +484,88 @@ function parseDraft(raw) {
   };
 }
 
+// Tiny YAML parser for the subset used in capsule frontmatter:
+//   key: value             (string, boolean, integer, possibly quoted)
+//   key: [a, b, "c d"]     (array of strings)
+//   key: { a: true, b: 3 }  (one-line object)
+//   parent:\n//     child: value          (one-level object used by freshness)
+// No multiline strings, anchors, or general YAML semantics.
 function parseYamlSubset(text) {
   const out = {};
-  for (const line of text.split(/\r?\n/)) {
-    const trimmed = line.replace(/#.*$/, "").trim();
-    if (!trimmed) continue;
+  const lines = text.split(/\r?\n/);
+  let currentObjectKey = null;
+  for (const rawLine of lines) {
+    const withoutComment = rawLine.replace(/#.*$/, "");
+    if (!withoutComment.trim()) continue;
+    const indent = withoutComment.match(/^\s*/)?.[0].length ?? 0;
+    const trimmed = withoutComment.trim();
     const idx = trimmed.indexOf(":");
     if (idx === -1) continue;
     const key = trimmed.slice(0, idx).trim();
-    let val = trimmed.slice(idx + 1).trim();
-    if (val === "") { out[key] = ""; continue; }
-    if (val.startsWith("[") && val.endsWith("]")) {
-      const inner = val.slice(1, -1).trim();
-      out[key] = inner ? splitYamlList(inner).map(stripQuotes) : [];
+    const val = trimmed.slice(idx + 1).trim();
+    if (indent === 0) {
+      if (val === "") {
+        out[key] = {};
+        currentObjectKey = key;
+      } else {
+        out[key] = parseYamlScalar(val);
+        currentObjectKey = null;
+      }
       continue;
     }
-    if (/^-?\d+$/.test(val)) { out[key] = parseInt(val, 10); continue; }
-    out[key] = stripQuotes(val);
+    if (currentObjectKey && indent >= 2 && out[currentObjectKey] && typeof out[currentObjectKey] === "object" && !Array.isArray(out[currentObjectKey])) {
+      out[currentObjectKey][key] = parseYamlScalar(val);
+    }
   }
   return out;
+}
+
+function parseYamlScalar(val) {
+  if (val === "") return "";
+  if (val === "true") return true;
+  if (val === "false") return false;
+  if (val.startsWith("[") && val.endsWith("]")) {
+    const inner = val.slice(1, -1).trim();
+    if (!inner) return [];
+    return splitYamlList(inner).map((s) => stripQuotes(s));
+  }
+  if (val.startsWith("{") && val.endsWith("}")) {
+    const inner = val.slice(1, -1).trim();
+    const obj = {};
+    if (!inner) return obj;
+    for (const pair of splitYamlList(inner)) {
+      const idx = pair.indexOf(":");
+      if (idx === -1) continue;
+      const key = pair.slice(0, idx).trim();
+      const value = pair.slice(idx + 1).trim();
+      obj[key] = parseYamlScalar(value);
+    }
+    return obj;
+  }
+  if (/^-?\d+$/.test(val)) return parseInt(val, 10);
+  return stripQuotes(val);
 }
 
 function splitYamlList(s) {
   const out = [];
   let buf = "";
   let inQuote = null;
-  for (const ch of s) {
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
     if (inQuote) {
-      if (ch === inQuote) inQuote = null; else buf += ch;
+      if (ch === inQuote) inQuote = null;
+      else buf += ch;
       continue;
     }
-    if (ch === '"' || ch === "'") { inQuote = ch; continue; }
-    if (ch === ",") { out.push(buf.trim()); buf = ""; continue; }
+    if (ch === '"' || ch === "'") {
+      inQuote = ch;
+      continue;
+    }
+    if (ch === ",") {
+      out.push(buf.trim());
+      buf = "";
+      continue;
+    }
     buf += ch;
   }
   if (buf.trim()) out.push(buf.trim());
@@ -523,12 +573,17 @@ function splitYamlList(s) {
 }
 
 function stripQuotes(s) {
-  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+  if (
+    (s.startsWith('"') && s.endsWith('"')) ||
+    (s.startsWith("'") && s.endsWith("'"))
+  ) {
     return s.slice(1, -1);
   }
   return s;
 }
 
+// Brief view = from "## Claim" through end of "## Verify in your context"
+// (anything before "## Receipt"; if no Receipt heading, through end of doc).
 function extractBriefView(body) {
   const claimIdx = body.search(/^##\s+Claim\s*$/m);
   if (claimIdx === -1) throw new Error('brief view missing "## Claim" heading');
@@ -538,25 +593,30 @@ function extractBriefView(body) {
 }
 
 function extractSection(body, headingAliases) {
+  const sections = parseSections(body);
+  for (const heading of headingAliases) {
+    if (sections[heading]) return sections[heading].trim();
+  }
+  return "";
+}
+
+function parseSections(body) {
+  const out = {};
   const lines = body.split(/\r?\n/);
-  let current = null;
+  let currentHeading = null;
   let buf = [];
-  const sections = {};
   for (const line of lines) {
     const m = line.match(/^##\s+(.+?)\s*$/);
     if (m) {
-      if (current !== null) sections[current] = buf.join("\n");
-      current = m[1].trim();
+      if (currentHeading !== null) out[currentHeading] = buf.join("\n");
+      currentHeading = m[1].trim();
       buf = [];
-    } else if (current !== null) {
+    } else if (currentHeading !== null) {
       buf.push(line);
     }
   }
-  if (current !== null) sections[current] = buf.join("\n");
-  for (const h of headingAliases) {
-    if (sections[h]) return sections[h].trim();
-  }
-  return "";
+  if (currentHeading !== null) out[currentHeading] = buf.join("\n");
+  return out;
 }
 
 function extractClaimText(briefViewMd) {
@@ -564,7 +624,10 @@ function extractClaimText(briefViewMd) {
   let inClaim = false;
   const buf = [];
   for (const line of lines) {
-    if (/^##\s+Claim\s*$/.test(line)) { inClaim = true; continue; }
+    if (/^##\s+Claim\s*$/.test(line)) {
+      inClaim = true;
+      continue;
+    }
     if (/^##\s+/.test(line)) break;
     if (inClaim) buf.push(line);
   }
@@ -588,6 +651,13 @@ function draftToPayload(draft) {
     youre_working_on: draft.youre_working_on,
     brief_view_md: draft.brief_view_md,
     full_body_md: draft.full_body_md,
+    schema_version: fm.schema_version,
+    capsule_version: fm.capsule_version,
+    claim_class: fm.claim_class,
+    platform_scope: fm.platform_scope,
+    applies_to_versions: fm.applies_to_versions,
+    freshness: fm.freshness && typeof fm.freshness === "object" ? fm.freshness : undefined,
+    freshness_assessment: fm.freshness && typeof fm.freshness === "object" ? fm.freshness : undefined,
   };
 }
 
