@@ -28,6 +28,17 @@ claude
 /ace:search <what you're working on>
 ```
 
+## Update
+
+If you already installed ACE, update with the fully-qualified plugin name:
+
+```bash
+claude plugin update ace@ace
+# then fully restart Claude Code; active sessions do not reload updated plugin files/hooks
+```
+
+Use `ace@ace` because the first `ace` is the plugin name and the second `ace` is the marketplace name. Your `~/.ace/token` should remain in place; if searches come back unauthorized, run `/ace:login` again inside Claude Code.
+
 ## Try it in 5 minutes
 
 Use specific, failure-shaped searches — close to a real coding task, not broad keywords:
