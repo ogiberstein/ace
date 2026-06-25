@@ -4,7 +4,7 @@
 // browsing tools are hidden unless explicitly enabled by env flags.
 //
 // Reads ~/.ace/token (consumer Bearer) on first use; returns ace_warning if
-// missing so the agent prompts the user to run /ace-login.
+// missing so the agent prompts the user to run a host-appropriate ACE login.
 //
 // Runs the retrieval-time injection scan (spec §5.4) on every capsule body
 // before returning. On scan fail: omits body, emits ace_warning, and fires
@@ -217,7 +217,19 @@ const ALL_TOOL_DEFS = [
   {
     name: "ace_promote",
     description:
-      "Founder-only. Promote an already-published staging capsule to public by id. Requires ~/.ace/publish_key.",
+      "Founder-only. Promote an already-published staging capsule to public by id. Requires ~/.ace/publish_key. Checks ace_publish_status first and does not suggest retry for non-retryable readiness blockers.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "ace_publish_status",
+    description:
+      "Founder-only. Inspect registry-owned publish/promote readiness for a staged or public capsule, including redaction/freshness blockers. Requires ~/.ace/publish_key.",
     inputSchema: {
       type: "object",
       properties: {
@@ -252,6 +264,7 @@ function getToolDefs() {
     names.add("ace_list_recent");
     names.add("ace_publish");
     names.add("ace_promote");
+    names.add("ace_publish_status");
     names.add("ace_submit");
     names.add("ace_submissions");
   }
@@ -265,10 +278,14 @@ async function callTool(name, args) {
   // Founder tools authenticate with the publish key, not the consumer token.
   if (name === "ace_publish") return await acePublish(args);
   if (name === "ace_promote") return await acePromote(args);
+  if (name === "ace_publish_status") return await acePublishStatus(args);
 
   const token = loadToken();
   if (!token) {
-    return aceWarning("Run /ace:login to authenticate.", "unauthorized");
+    return aceWarning(
+      "Authenticate with ACE before searching. Claude Code: run /ace:login. Generic MCP/Hermes: run `node plugins/ace/scripts/login.cjs` with the same ACE_REGISTRY_URL and ACE_TOKEN_FILE as this MCP server.",
+      "unauthorized",
+    );
   }
 
   if (name === "ace_search") return await aceSearch(token, args);
@@ -412,6 +429,16 @@ async function acePublish(args) {
   const validationError = validateDraftPayload(payload);
   if (validationError) return aceError(validationError, "invalid_request");
 
+  if (args.to_public === true) {
+    const preflight = preparePublicPublishPayload(payload);
+    if (!preflight.ok) {
+      const err = aceError("public publish blocked by readiness preflight", "invalid_request");
+      err.retryable = false;
+      err.blockers = preflight.blockers;
+      return err;
+    }
+  }
+
   const publishResp = await registryFetch(
     `${REGISTRY_URL}/v1/capsules`,
     founderKey,
@@ -431,7 +458,11 @@ async function acePublish(args) {
         id: payload.id,
         visibility: "staging",
         promote_error: promoteResp.error.ace_error,
-        note: "Published to staging, but promote failed. Retry with ace_promote.",
+        blockers: promoteResp.error.blockers,
+        retryable: promoteResp.error.retryable === true,
+        note: promoteResp.error.retryable === true
+          ? "Published to staging, but promote hit a transient conflict. Re-check publish status before retrying."
+          : "Published to staging, but promote failed on non-retryable readiness blockers. Run ace_publish_status and republish the draft if freshness/redaction must change.",
       };
     }
     return { ok: true, id: payload.id, visibility: "public" };
@@ -455,6 +486,15 @@ async function acePromote(args) {
   }
   const id = String(args.id || "");
   if (!id) return aceError("id required", "invalid_request");
+  const status = await fetchPublishStatus(founderKey, id);
+  if (status.error) return status.error;
+  if (status.body && status.body.ok_to_promote === false) {
+    const err = aceError("capsule is not ready to promote", "invalid_request");
+    err.retryable = false;
+    err.blockers = status.body.blockers || [];
+    err.publish_status = status.body;
+    return err;
+  }
   const resp = await registryFetch(
     `${REGISTRY_URL}/v1/capsules/${encodeURIComponent(id)}/promote`,
     founderKey,
@@ -462,6 +502,112 @@ async function acePromote(args) {
   );
   if (resp.error) return resp.error;
   return { ok: true, id, visibility: "public" };
+}
+
+async function acePublishStatus(args) {
+  const founderKey = loadFounderKey();
+  if (!founderKey) {
+    return aceError(
+      "ace_publish_status is founder-only and no publish key is present on this machine",
+      "unauthorized",
+    );
+  }
+  const id = String(args.id || "");
+  if (!id) return aceError("id required", "invalid_request");
+  const resp = await fetchPublishStatus(founderKey, id);
+  if (resp.error) return resp.error;
+  return resp.body;
+}
+
+async function fetchPublishStatus(founderKey, id) {
+  return await registryFetch(
+    `${REGISTRY_URL}/v1/capsules/${encodeURIComponent(id)}/publish-status`,
+    founderKey,
+  );
+}
+
+const LOCAL_CLAIM_CLASSES = new Set(["tool_bug_version_pinned", "public_issue_gotcha", "stable_behavior", "posture"]);
+const LOCAL_STRICT_REPOS = ["anthropics/claude-code", "openai/codex", "modelcontextprotocol/", "modelcontextprotocol/modelcontextprotocol"];
+const LOCAL_TOOL_BUG_SUBJECT_RE = /\b(cli|tool|plugin|mcp|sdk|library|package|framework|worker|runtime|claude code|codex)\b/i;
+const LOCAL_BUG_VERB_RE = /\b(ignored|silently|broken|regression|crashes|fails on|does not work|stopped working|bug)\b/i;
+const LOCAL_VERSION_TOKEN_RE = /\b(?:v?\d+\.\d+(?:\.\d+)?|[<>]=\s*\d+(?:\.\d+){0,2}|versions?\s+(?:before|after|through|from|<=|>=)\s*\d+(?:\.\d+){0,2}|version\s+\d+(?:\.\d+){0,2})\b/i;
+
+function preparePublicPublishPayload(payload) {
+  const blockers = [];
+  if (payload.redaction_status !== "public-safe") {
+    blockers.push(publicBlocker("redaction_not_public_safe", "redaction_status", payload.redaction_status, "public-safe", "complete/confirm portabilization audit and mark redaction_status public-safe"));
+  }
+  const scanError = scanPublishPayload(payload);
+  if (scanError) blockers.push(publicBlocker("publish_scan_failed", scanError.field, scanError.reason, "shipping scanner pass", "remove or rewrite the flagged content before public publish"));
+
+  const suppliedAssessment = payload.freshness_assessment || payload.freshness;
+  if (!suppliedAssessment) {
+    const claimClass = inferLocalClaimClass(payload);
+    if (claimClass === "stable_behavior" || claimClass === "posture") {
+      payload.freshness_assessment = generateStableFreshnessAssessment(payload, claimClass);
+    } else {
+      blockers.push(publicBlocker("freshness_assessment_missing", "freshness_assessment", "missing", "registry-valid freshness_assessment", "add a freshness assessment or publish to staging only"));
+    }
+  } else if (!isCompleteFreshnessAssessment(suppliedAssessment)) {
+    blockers.push(publicBlocker("freshness_assessment_incomplete", "freshness_assessment", "incomplete", "checked_at/status/checks/deterministic_checks.freshness", "supply a registry-valid freshness assessment or let stable_behavior preflight generate one"));
+  }
+
+  return { ok: blockers.length === 0, blockers };
+}
+
+function publicBlocker(code, field, actual, required, action) {
+  return { code, field, actual, required, action };
+}
+
+function scanPublishPayload(payload) {
+  const targets = [
+    ["title", payload.title || "", {}],
+    ["claim", payload.claim || "", {}],
+    ["domain", payload.domain || "", {}],
+    ["tags", Array.isArray(payload.tags) ? payload.tags.join("\n") : "", {}],
+    ["youre_working_on", payload.youre_working_on || "", {}],
+    ["brief_view_md", payload.brief_view_md || "", { requireBriefFormat: true }],
+    ["full_body_md", payload.full_body_md || "", { requireBriefFormat: true, maxLength: MAX_BODY_LEN }],
+  ];
+  for (const [field, value, opts] of targets) {
+    const scan = runScan(value, opts);
+    if (!scan.ok) return { field, reason: scan.reason || "unknown" };
+  }
+  return null;
+}
+
+function inferLocalClaimClass(payload) {
+  const declared = LOCAL_CLAIM_CLASSES.has(payload.claim_class) ? payload.claim_class : "public_issue_gotcha";
+  const text = `${payload.claim || ""}\n${payload.applies_to_versions || ""}\n${payload.verified_against || ""}\n${payload.brief_view_md || ""}`;
+  const lower = text.toLowerCase();
+  const strictRepo = LOCAL_STRICT_REPOS.some((repo) => repo.endsWith("/") ? lower.includes(repo) : lower.includes(repo));
+  const strict = declared === "tool_bug_version_pinned" || strictRepo || LOCAL_VERSION_TOKEN_RE.test(text) || (LOCAL_BUG_VERB_RE.test(text) && LOCAL_TOOL_BUG_SUBJECT_RE.test(text));
+  return strict ? "tool_bug_version_pinned" : declared;
+}
+
+function generateStableFreshnessAssessment(payload, claimClass) {
+  const checkedAt = new Date().toISOString();
+  const interval = claimClass === "stable_behavior" || claimClass === "posture" ? 90 : 30;
+  const reverify = new Date(checkedAt);
+  reverify.setUTCDate(reverify.getUTCDate() + interval);
+  return {
+    status: "fresh",
+    effective_claim_class: claimClass,
+    checked_at: checkedAt,
+    review_interval_days: interval,
+    reverify_after: reverify.toISOString(),
+    platform_scope: Array.isArray(payload.platform_scope) ? payload.platform_scope : [],
+    applies_to_versions: payload.applies_to_versions || "",
+    stale_reason: "",
+    reason: `Local public-publish preflight classified this as ${claimClass}; no fast-moving version-specific source dependency was detected.`,
+    checks: { cadence: true, source_anchor_state: true },
+    deterministic_checks: { freshness: true },
+    source_state_json: [],
+  };
+}
+
+function isCompleteFreshnessAssessment(value) {
+  return !!(value && typeof value === "object" && value.status && value.checked_at && value.checks && (value.deterministic_checks?.freshness === true || value.checks?.freshness === true));
 }
 
 // ---------------------------------------------------------------------------
@@ -973,12 +1119,16 @@ async function registryFetch(url, token, init = {}) {
     return { error: aceError("capsule deleted", "deleted") };
   }
   if (resp.status >= 400) {
-    return {
-      error: aceError(
-        (body && body.ace_error) || `registry error ${resp.status}`,
-        "invalid_request",
-      ),
-    };
+    const err = aceError(
+      (body && body.ace_error) || `registry error ${resp.status}`,
+      (body && body.code) || "invalid_request",
+    );
+    if (body && typeof body === "object") {
+      for (const key of ["blockers", "retryable", "ok_to_promote", "publish_status"]) {
+        if (Object.prototype.hasOwnProperty.call(body, key)) err[key] = body[key];
+      }
+    }
+    return { error: err };
   }
   return { body: body || {} };
 }
@@ -1086,12 +1236,37 @@ if (process.argv.includes("--selftest")) {
     }
     console.log(`\n${passed}/${cases.length} scan cases pass`);
     const retrievalTools = getToolDefs().map((tool) => tool.name).sort();
-    const expectedRetrievalTools = ["ace_report_reuse", "ace_search"];
+    const expectedRetrievalTools = AUTHORING_MODE
+      ? ["ace_get", "ace_list_recent", "ace_promote", "ace_publish", "ace_publish_status", "ace_report_reuse", "ace_search", "ace_submissions", "ace_submit"]
+      : ["ace_report_reuse", "ace_search"];
     const toolTableOk = JSON.stringify(retrievalTools) === JSON.stringify(expectedRetrievalTools);
-    console.log(`${toolTableOk ? "PASS" : "FAIL"} retrieval tool table got=${JSON.stringify(retrievalTools)}`);
+    console.log(`${toolTableOk ? "PASS" : "FAIL"} tool table got=${JSON.stringify(retrievalTools)}`);
     const trimmed = shapeCapsuleForRetrieval({ id: "capsule-20260604-test", brief_view: "## Claim\n" + "x".repeat(MAX_BRIEF_CHARS + 100), body: "full" });
     const trimOk = trimmed.brief_view.length < MAX_BRIEF_CHARS + 220 && trimmed.ace_note === "brief_truncated" && trimmed.body === undefined;
     console.log(`${trimOk ? "PASS" : "FAIL"} brief-only shaping`);
-    process.exit(passed === cases.length && toolTableOk && trimOk ? 0 : 1);
+    const stablePayload = {
+      id: "capsule-20260624-stable",
+      title: "Stable fixture",
+      claim: "Consent cookie file gate value is often ignored when the file gate is absent",
+      claim_type: "shortcut",
+      domain: "HTTP behavior",
+      tags: ["http"],
+      evidence_score: 3,
+      verified_against: "Public regulator docs; version scope is not relevant",
+      last_verified_at: "2026-06-24",
+      redaction_status: "public-safe",
+      youre_working_on: "Consent cookie testing",
+      brief_view_md: "## Claim\nConsent cookie file gate value is often ignored when absent.\n\n## You're working on\nConsent cookie testing\n\n## Don't waste time on\n- Assuming the cookie value is checked.\n\n## First move if you proceed\nCheck the file gate.\n\n## Verify in your context\n- Test absent file behavior.",
+      full_body_md: "## Claim\nConsent cookie file gate value is often ignored when absent.\n\n## You're working on\nConsent cookie testing\n\n## Don't waste time on\n- Assuming the cookie value is checked.\n\n## First move if you proceed\nCheck the file gate.\n\n## Verify in your context\n- Test absent file behavior.\n\n## Receipt\nPublic regulator docs.\n",
+      claim_class: "stable_behavior",
+    };
+    const stablePreflight = preparePublicPublishPayload(stablePayload);
+    const stableOk = stablePreflight.ok && stablePayload.freshness_assessment?.status === "fresh" && stablePayload.freshness_assessment?.deterministic_checks?.freshness === true;
+    console.log(`${stableOk ? "PASS" : "FAIL"} public preflight stable freshness generation`);
+    const strictPayload = { ...stablePayload, claim: "A CLI bug fails on version 2.1.170", claim_class: "stable_behavior", freshness_assessment: undefined };
+    const strictPreflight = preparePublicPublishPayload(strictPayload);
+    const strictOk = !strictPreflight.ok && strictPreflight.blockers.some((b) => b.code === "freshness_assessment_missing");
+    console.log(`${strictOk ? "PASS" : "FAIL"} public preflight strict missing assessment blocks`);
+    process.exit(passed === cases.length && toolTableOk && trimOk && stableOk && strictOk ? 0 : 1);
   })();
 }

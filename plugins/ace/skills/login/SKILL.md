@@ -7,6 +7,14 @@ description: Authenticate this machine with the ACE registry via GitHub device f
 
 Authenticate the local machine with the ACE registry. Required once per machine before `ace_search` and friends will work.
 
+This slash-command skill is the Claude Code flow. For generic MCP hosts such as Hermes, use the equivalent host-neutral helper instead:
+
+```bash
+node plugins/ace/scripts/login.cjs
+```
+
+It uses the same `$ACE_REGISTRY_URL` and `$ACE_TOKEN_FILE` contract and must never print the returned token.
+
 ## Flow
 
 1. Resolve the registry URL: prefer `$ACE_REGISTRY_URL`; fall back to `https://ace-registry.ogiberstein.workers.dev` (the live registry; see README install section). Resolve the **token file** the same way the MCP server and CLI do: prefer `$ACE_TOKEN_FILE`; fall back to `~/.ace/token`. Write the token to this resolved path in step 5 — this is what stops a sandbox/secondary login from overwriting a different registry's `~/.ace/token`.

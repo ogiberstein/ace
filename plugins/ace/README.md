@@ -16,6 +16,7 @@ This directory is the **real** ACE plugin shipped to users. For the capability s
 | `/ace:submit` slash command | `skills/submit/SKILL.md` |
 | `/ace:my-submissions` slash command | `skills/my-submissions/SKILL.md` |
 | `/ace:review-queue` slash command | `skills/review-queue/SKILL.md` |
+| Host-neutral login helper | `scripts/login.cjs` |
 
 The standing-instructions snippet is the **single source of truth** for the §6.3 CLAUDE.md snippet. Edit `snippets/claude-md-snippet.txt` to change agent behavior; the SessionStart hook reads it verbatim.
 
@@ -43,7 +44,29 @@ On scan failure:
 | Var | Default | Purpose |
 |---|---|---|
 | `ACE_REGISTRY_URL` | `http://localhost:8787` | Worker base URL. Override to the deployed URL in production. |
-| `ACE_TOKEN_FILE` | `~/.ace/token` | Path to the consumer Bearer token. Created by `/ace:login`. |
+| `ACE_TOKEN_FILE` | `~/.ace/token` | Path to the consumer Bearer token. Created by `/ace:login` or `scripts/login.cjs`. |
+
+## Login outside Claude Code
+
+Claude Code users can run `/ace:login`. Other MCP hosts, including Hermes, can use the standalone helper:
+
+```bash
+node plugins/ace/scripts/login.cjs
+```
+
+For non-default endpoints, pass the same registry URL and token file that the MCP server uses:
+
+```bash
+node plugins/ace/scripts/login.cjs \
+  --registry https://ace-registry.ogiberstein.workers.dev \
+  --token-file ~/.ace/token
+```
+
+The helper prints the GitHub device-code URL/code, writes the returned ACE Bearer token to the token file with mode `0600`, and never prints the token value. To verify an existing token without printing it:
+
+```bash
+node plugins/ace/scripts/login.cjs --check
+```
 
 ## Self-test
 

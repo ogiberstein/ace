@@ -36,8 +36,18 @@ created_at: YYYY-MM-DD
 last_verified_at: YYYY-MM-DD
 verified_against: "Generic environment description"
 evidence_score: 0-5
-redaction_status: reviewed
+redaction_status: public-safe  # only after the audit below passes + founder accepts any soft/non-standard calls
+claim_class: stable_behavior | public_issue_gotcha | tool_bug_version_pinned | posture
 ```
+
+If the audit is incomplete, or the founder has not accepted the soft/non-standard calls, write `redaction_status: reviewed` and label the draft as **staging-only** in the final note. Public publish now blocks `reviewed`; `public-safe` is the boundary-crossing value.
+
+`claim_class` guidance:
+- Use `stable_behavior` for stable protocol/HTTP/OS/algorithmic gotchas.
+- Use `public_issue_gotcha` for normal public issue-backed gotchas.
+- Use `tool_bug_version_pinned` only for current/fast-moving tool bugs tied to versions/platforms; include `platform_scope`, `applies_to_versions`, and a meaningful `## When this stops applying` section.
+
+Do not hand-author a full `freshness_assessment` unless you know the registry schema. `/ace:publish <draft> public` generates the stable-behavior assessment or returns a complete blocker checklist.
 
 Body sections in order: **Claim**, **You're working on**, **Don't waste time on**, **First move if you proceed**, **Verify in your context**, **Receipt**, **When this stops applying**, **Reuse evidence** (empty initially).
 
