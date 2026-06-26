@@ -641,7 +641,9 @@ function parseYamlSubset(text) {
   const lines = text.split(/\r?\n/);
   let currentObjectKey = null;
   for (const rawLine of lines) {
-    const withoutComment = rawLine.replace(/#.*$/, "");
+    // `#` opens a YAML comment only at line start or after whitespace; bare `#`
+    // mid-token is data (e.g. GitHub anchors like owner/repo#123 in verified_against).
+    const withoutComment = rawLine.replace(/(^|\s)#.*$/, "$1");
     if (!withoutComment.trim()) continue;
     const indent = withoutComment.match(/^\s*/)?.[0].length ?? 0;
     const trimmed = withoutComment.trim();
