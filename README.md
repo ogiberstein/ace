@@ -22,6 +22,8 @@ claude
 /ace:login
 ```
 
+Use `/ace:login` inside Claude Code for ACE auth. Do **not** use bare `/login`; that is Claude Code's native Anthropic account login.
+
 `/ace:login` runs a one-time GitHub device-flow auth using `read:user` only. After login, ACE can search automatically at the start of a task through the SessionStart hook, or you can run:
 
 ```text
@@ -38,6 +40,14 @@ claude plugin update ace@ace
 ```
 
 Use `ace@ace` because the first `ace` is the plugin name and the second `ace` is the marketplace name. Your `~/.ace/token` should remain in place; if searches come back unauthorized, run `/ace:login` again inside Claude Code.
+
+To verify the installed plugin version:
+
+```bash
+claude plugin details ace
+```
+
+For the `/login` namespace fix, it should show `0.1.8` or newer.
 
 ## Try it in 5 minutes
 
