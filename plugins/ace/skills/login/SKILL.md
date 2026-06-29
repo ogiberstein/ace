@@ -1,11 +1,12 @@
 ---
-name: login
-description: Authenticate this machine with the ACE registry via GitHub device flow. Run once per machine; the resulting Bearer token is written to $ACE_TOKEN_FILE (default ~/.ace/token).
+name: ACE login
+description: Manual ACE registry authentication via GitHub device flow. Run only with the namespaced Claude Code command `/ace:login`; never use bare `/login`, which is reserved for Claude Code's native Anthropic login.
+disable-model-invocation: true
 ---
 
 # /ace:login
 
-Authenticate the local machine with the ACE registry. Required once per machine before `ace_search` and friends will work.
+Authenticate the local machine with the ACE registry. Required once per machine before `ace_search` and friends will work. This command is intentionally namespaced as `/ace:login`; bare `/login` must remain Claude Code's native Anthropic login.
 
 This slash-command skill is the Claude Code flow. For generic MCP hosts such as Hermes, use the equivalent host-neutral helper instead:
 
@@ -43,7 +44,7 @@ It uses the same `$ACE_REGISTRY_URL` and `$ACE_TOKEN_FILE` contract and must nev
 
 ## After
 
-Run `ace_search` from any session to verify. If it returns `ace_warning: "Run /ace-login to authenticate"`, the token wasn't written correctly — re-run.
+Run `ace_search` from any session to verify. If it returns `ace_warning: "Run /ace:login to authenticate"`, the token wasn't written correctly — re-run `/ace:login` inside Claude Code (or `node plugins/ace/scripts/login.cjs` in a generic MCP host).
 
 ## Privacy notice
 

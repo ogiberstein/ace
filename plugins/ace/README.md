@@ -9,7 +9,7 @@ This directory is the **real** ACE plugin shipped to users. For the capability s
 | MCP server (4 tools) | `scripts/mcp-server.cjs` |
 | MCP registration | `.mcp.json` |
 | Standing instructions | `hooks/hooks.json` + `hooks/ace-session-start.sh` reading `snippets/claude-md-snippet.txt` |
-| `/ace:login` slash command | `skills/login/SKILL.md` |
+| `/ace:login` slash command | `skills/login/SKILL.md` — namespaced only; bare `/login` is reserved for Claude Code's native Anthropic login |
 | `/ace:search` slash command | `skills/search/SKILL.md` |
 | `/ace:recent` slash command | `skills/recent/SKILL.md` |
 | `/ace:capture` slash command | `skills/capture/SKILL.md` |
@@ -48,7 +48,7 @@ On scan failure:
 
 ## Login outside Claude Code
 
-Claude Code users can run `/ace:login`. Other MCP hosts, including Hermes, can use the standalone helper:
+Claude Code users must run the namespaced command `/ace:login`. Do not use bare `/login`; Claude Code owns that for native Anthropic account authentication. Other MCP hosts, including Hermes, can use the standalone helper:
 
 ```bash
 node plugins/ace/scripts/login.cjs
