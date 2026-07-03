@@ -47,9 +47,9 @@ If the audit is incomplete, or the founder has not accepted the soft/non-standar
 - Use `public_issue_gotcha` for normal public issue-backed gotchas.
 - Use `tool_bug_version_pinned` only for current/fast-moving tool bugs tied to versions/platforms; include `platform_scope`, `applies_to_versions`, and a meaningful `## When this stops applying` section.
 
-Do not hand-author a full `freshness_assessment` unless you know the registry schema. `/ace:publish <draft> public` generates the stable-behavior assessment or returns a complete blocker checklist.
+Do not hand-author a full `freshness_assessment` unless you know the registry schema. `/ace:publish <draft> public` and `ace publish --dry-run <draft>` generate the stable-behavior assessment or return a complete blocker checklist.
 
-Body sections in order: **Claim**, **You're working on**, **Don't waste time on**, **First move if you proceed**, **Verify in your context**, **Receipt**, **When this stops applying**, **Reuse evidence** (empty initially).
+Body sections in order, with no extra `##` headings: **Claim**, **You're working on**, **Don't waste time on**, **First move if you proceed**, **Verify in your context**, **Receipt**, **When this stops applying**, **Reuse evidence** (empty initially).
 
 Target: brief view (first five sections) fits in ~500-800 tokens.
 
@@ -96,7 +96,7 @@ Write the draft to `<resolved-dir>/<id>.md`.
 
 Confirm to the founder, substituting the actual resolved path:
 
-> Draft saved at `<resolved-path>`. Audit found N hard blocks (refused), M soft blocks (review needed), K non-standard receipt items (justification needed). Once reviewed, publish from a real terminal (not the sandboxed agent Bash) with `ACE_REGISTRY_URL=... node <repo>/cli/ace.cjs publish <resolved-path>`.
+> Draft saved at `<resolved-path>`. Audit found N hard blocks (refused), M soft blocks (review needed), K non-standard receipt items (justification needed). Next run `ace publish --dry-run <resolved-path>` or `/ace:publish <resolved-path> team-shared|public` from an admin profile; dry-run/preflight must pass before publish/promote.
 
 ## Token budget
 
