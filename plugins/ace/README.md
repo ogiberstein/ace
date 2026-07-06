@@ -38,7 +38,7 @@ Tool exposure is role-based:
 
 ### Submission review/decision (admin)
 
-The `ace_review_*` / `ace_submission_*` tools are the customer-mode path for moving a submitted `sub-*` capsule through review into published visibility (Team ACE renders this as **team-shared**; internal APIs still say `public`). Workflow: `/ace:review-queue` (see `skills/review-queue/SKILL.md`). Invariants: they authenticate with the admin decision key (`ACE_PUBLISH_KEY_FILE`), never the consumer token or a reviewer token; approval requires `submission_id` + current `verdict_version` + `reviewed_candidate_sha256` from a prior `ace_review_get` and refetches the artifact to fail closed on any drift; pending/unreviewed submissions can never be approved; artifact text is shown only as bounded scanner-gated previews and full bodies are never emitted; a local-intent vs registry `target_kind` mismatch fails closed before any decision write. Queue counts are `*_listed_count` with `count_exact=false` (the registry lists at most 100 rows per status). CLI parity for review/decision commands is deferred: the MCP tools + `/ace:review-queue` are the supported customer-mode path; raw founder HTTP remains a developer fallback only.
+The `ace_review_*` / `ace_submission_*` tools are the customer-mode path for moving a submitted `sub-*` capsule through review into published visibility (Team ACE renders this as **team-shared**; internal APIs still say `public`). Workflow: `/ace:review-queue` (see `skills/review-queue/SKILL.md`). Invariants: they authenticate with the admin decision key (`ACE_PUBLISH_KEY_FILE`), never the consumer token or a reviewer token; approval requires `submission_id` + current `verdict_version` + `reviewed_candidate_sha256` from a prior `ace_review_get` and refetches the artifact to fail closed on any drift; Public ACE still requires strict LLM-reviewed `reviewed_recommend`, while Team ACE friend-v1 permits admin-as-reviewer approval of pending submissions only when deterministic gates pass, team attestation is present, and `confirm_team_shared=true`; artifact text is shown only as bounded scanner-gated previews and full bodies are never emitted; a local-intent vs registry `target_kind` mismatch fails closed before any decision write. Queue counts are `*_listed_count` with `count_exact=false` (the registry lists at most 100 rows per status). CLI parity for review/decision commands is deferred: the MCP tools + `/ace:review-queue` are the supported customer-mode path; raw founder HTTP remains a developer fallback only.
 
 All tools return union shapes per spec §6.2:
 
@@ -138,6 +138,24 @@ Run `/ace:doctor` as the first command in every launched session. Expected postu
 - Team admin: `Target=Team ACE ace-oleg-team0`, `Role=admin`, submit and publish yes, token and publish key present.
 
 If `/ace:doctor` reports Public ACE when you expected Team ACE, or admin when you expected submitter, stop and relaunch with the correct profile. Profiles are clients, not corpus planes: Public ACE is the global corpus; Team ACE is an isolated instance where `public` rows mean team-shared only inside that instance.
+
+
+## Joining a Team ACE instance
+
+A Team ACE join has three parts:
+
+1. **Team endpoint + token file:** get the team registry URL and a separate token path such as `~/.ace/<team>/token`; run `/ace:login` (or `scripts/login.cjs --registry ... --token-file ...`) against that exact endpoint. Never print token contents.
+2. **MCP registration/profile env:** start the MCP server with explicit team env: `ACE_REGISTRY_URL`, `ACE_TARGET_NAME`, `ACE_TARGET_KIND=team`, `ACE_ROLE=retrieval|submitter|admin`, and `ACE_TOKEN_FILE`. Admin sessions also set `ACE_PUBLISH_KEY_FILE`; submitter/retrieval sessions must not.
+3. **Verify agent-initiated retrieval wiring:** run `/ace:doctor` in the launched session. It must show `Retrieval wiring: agent-initiated via SessionStart → <team> (team)` and the team endpoint. If it shows Public ACE or `[built-in default URL]`, stop: unset `ACE_REGISTRY_URL` silently falls back to Public ACE and the agent will search the wrong corpus.
+
+Default topology for friend v1: one ACE endpoint per work machine. On a machine used for team work, the team instance should normally be the `ace` server loaded by the SessionStart instruction.
+
+Existing Public ACE installs can coexist, but be explicit:
+
+- **Switch the machine to Team ACE:** relaunch the normal `ace` server/profile with the team URL/token. The standing instruction drives the team `ace_search` tool.
+- **Run both:** register distinct MCP server names such as `ace-public` and `ace-<team>`. The standing instruction only drives the server/tool name actually exposed as `ace_search` in that session; verify with `/ace:doctor` and `tools/list` rather than assuming.
+
+Pre-allow both `ace_search` and `ace_report_reuse` in project `.claude/settings.json` for the join packet, or tell the user to expect first-run permission prompts. Live Team0 findings: declining the reuse prompt can reject the whole tool batch and stall the turn while dropping the receipt. A first-run ToolSearch/load hop before `ace_search` is normal in harnesses with deferred tool schemas.
 
 ## Login outside Claude Code
 

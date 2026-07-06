@@ -24,7 +24,7 @@ If no path is given, use the draft this session just created.
 ## Action
 
 1. Run `/ace:doctor` first. Stop if the role is not `admin`, the target is wrong, or the publish key is missing.
-   - A `sub-*` argument is a **submission id**, not a draft or capsule. Do not publish it: route to `/ace:review-queue` (`ace_review_get`, then `ace_submission_approve`/`ace_submission_reject` after a reviewer recommendation). The publish tools refuse `sub-*` before reading the publish key or contacting the registry.
+   - A `sub-*` argument is a **submission id**, not a draft or capsule. Do not publish it: route to `/ace:review-queue` (`ace_review_get`, then `ace_submission_approve`/`ace_submission_reject`; Team ACE pending rows require exact candidate SHA + `confirm_team_shared=true`). The publish tools refuse `sub-*` before reading the publish key or contacting the registry.
 2. Resolve intent:
    - A `.md` path → publish that draft to staging.
    - A `.md` path + `public`/`team-shared` → publish then promote if readiness passes.
@@ -39,7 +39,7 @@ If no path is given, use the draft this session just created.
 
 These gates are intentional; do not weaken them or bypass them for founders/admins:
 
-- `redaction_status` must be `public-safe` for public/team-shared promote. `reviewed` is staging-only.
+- Public ACE publish/promote requires `redaction_status: public-safe`. Team ACE admin-as-reviewer approval may publish team-shared candidates with actual `redaction_status: reviewed` or `public-safe`; do not silently relabel reviewed as public-safe.
 - `claim_class` drives freshness auto-generation. Only `posture` and `stable_behavior` auto-generate a `fresh` assessment. Version tokens like `2.1`, bug verbs such as `broken`/`fails`/`regression`, or strict repo mentions like `anthropics/claude-code`, `openai/codex`, or `modelcontextprotocol/*` make the effective class `tool_bug_version_pinned` and require explicit freshness fields.
 - Allowed `##` headings are exactly: `Claim`, `You're working on`, `Don't waste time on`, `First move if you proceed`, `Verify in your context`, `Receipt`, `When this stops applying`, `Reuse evidence`. Any other section can trip `unknown_section`.
 - The scanner blocks exfil-shaped text: `print|reveal|dump|upload|leak` near `token|secret|api key|password|credential`, plus direct asks such as `show/tell/give me ... token` or `include ... contents of ... token`. Capsules about credential hygiene are most likely to trip this legitimately; phrase them as safety posture, not as instructions to disclose secrets.

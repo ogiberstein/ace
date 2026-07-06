@@ -38,13 +38,13 @@ function visibility(kind) { return kind === "team" ? "team-shared" : "Public ACE
 function tokenFile(env) { return envOrDefault(env.ACE_TOKEN_FILE, path.join(os.homedir(), ".ace", "token")); }
 function publishKeyFile(env, role) { return role === "admin" ? envOrDefault(env.ACE_PUBLISH_KEY_FILE, path.join(os.homedir(), ".ace", "publish_key")) : envOrDefault(env.ACE_PUBLISH_KEY_FILE, ""); }
 function exists(p) { return !!p && fs.existsSync(p); }
-function capabilities(role, cap) {
+function capabilities(role, cap, opts = {}) {
   const retrieval = true;
   const publish = role === "admin";
   let submit = role === "submitter" || role === "admin";
   let submitLabel = submit ? "yes" : "no";
   if (submit && cap && cap.submissions_open === false) submitLabel = "configured-but-target-closed";
-  if (submit && cap === null) submitLabel = "configured-but-target-unknown";
+  if (submit && cap === null) submitLabel = opts.startup ? "not probed at startup" : "configured-but-target-unknown";
   return { retrieval, submit, publish, submitLabel };
 }
 function parseCapabilities(env) {
@@ -99,17 +99,19 @@ function expectedTools(role, env) {
   }
   return tools.sort();
 }
-function diagnose(env = process.env) {
+function diagnose(env = process.env, opts = {}) {
   const role = roleOf(env);
+  const explicitRegistryUrl = envIsSet(env, "ACE_REGISTRY_URL");
   const registryUrl = envOrDefault(env.ACE_REGISTRY_URL, "https://ace-registry.ogiberstein.workers.dev").replace(/\/$/, "");
   const targetName = envOrDefault(env.ACE_TARGET_NAME, /ace-registry\.ogiberstein\.workers\.dev/.test(registryUrl) ? "ace-public" : "ace-target");
   const kind = targetKindOf(env, registryUrl);
   const token = tokenFile(env);
   const pub = publishKeyFile(env, role);
   const cap = parseCapabilities(env);
-  const caps = capabilities(role, cap === undefined ? null : cap);
+  const caps = capabilities(role, cap === undefined ? null : cap, { startup: opts.startup === true });
   const actualTools = env.ACE_ACTUAL_TOOLS_JSON ? JSON.parse(env.ACE_ACTUAL_TOOLS_JSON) : undefined;
   const warnings = [];
+  if (!explicitRegistryUrl) warnings.push("ACE_REGISTRY_URL unset; using built-in Public ACE default. If this session should use Team ACE, this is a likely miswire.");
   if (kind === "team" && /ace-registry\.ogiberstein\.workers\.dev/.test(registryUrl)) warnings.push("Team ACE profile points at Public ACE production URL");
   if (kind === "public" && !/ace-registry\.ogiberstein\.workers\.dev/.test(registryUrl)) warnings.push("Public ACE profile points at a non-production/isolated URL");
   const driftVars = ["ACE_REGISTRY_URL", "ACE_TOKEN_FILE", "ACE_PUBLISH_KEY_FILE", "ACE_ROLE", "ACE_AUTHORING_MODE", "ACE_SUBMIT_MODE", "ACE_ADMIN_MODE", "ACE_CAPABILITIES_JSON", "ACE_CAPABILITIES_FIXTURE_FILE"].filter((k) => envIsSet(env, k) && !truthy(env.ACE_PROFILE_LAUNCHED));
@@ -125,18 +127,20 @@ function diagnose(env = process.env) {
   else if (warnings.some((w) => /missing publish key/.test(w))) next = "Relaunch admin profile with ACE_ADMIN_MODE=1 and ACE_PUBLISH_KEY_FILE set";
   else if (role === "submitter" && cap && cap.submissions_open === false) next = "Ask operator to open Team ACE submissions; no local fix";
   else if (driftVars.length) next = "Exit and relaunch via an ACE role profile";
+  else if (!explicitRegistryUrl && (kind === "team" || role === "submitter" || role === "admin")) next = "If this should use Team ACE, relaunch with explicit ACE_REGISTRY_URL; otherwise this Public ACE default warning is informational";
   else if (!exists(token)) next = "Run /ace:login in this profile";
-  return { role, registryUrl, targetName, kind, token, pub, cap, caps, warnings, intake, next, tools: expected, actualTools };
+  return { role, registryUrl, explicitRegistryUrl, targetName, kind, token, pub, cap, caps, warnings, intake, next, tools: expected, actualTools };
 }
 function render(mode, env = process.env) {
-  const d = diagnose(env);
+  const d = diagnose(env, { startup: mode === "startup" });
   const lines = [];
   lines.push(`ACE target: ${label(d.kind)} ${d.targetName} (${d.registryUrl})`);
   lines.push(`ACE role: ${d.role}`);
   lines.push(`Capabilities: retrieval=yes, submit=${d.caps.submitLabel}, publish=${d.caps.publish ? "yes" : "no"}`);
+  lines.push(`Retrieval wiring: agent-initiated via SessionStart → ${d.targetName} (${d.kind})${d.explicitRegistryUrl ? "" : " [built-in default URL]"}`);
   lines.push(`Token file: ${d.token ? `configured ${exists(d.token) ? "+ present" : "+ missing"} (${d.token}; contents hidden)` : "absent"}`);
   lines.push(`Publish key: ${d.pub ? `configured ${exists(d.pub) ? "+ present" : "+ missing"} (${d.pub}; contents hidden)` : (d.role === "admin" ? "missing" : "absent")}`);
-  lines.push(`Submission intake: ${d.intake}`);
+  lines.push(`Submission intake: ${mode === "startup" && d.cap === undefined ? "not probed at startup — run /ace:doctor for live state" : d.intake}`);
   lines.push(`Visibility language: ${visibility(d.kind)}${d.kind === "team" ? " inside this Team ACE instance; not Public ACE" : " global corpus"}`);
   if (mode !== "startup") {
     lines.push(`Advertised tools expected: ${d.tools.join(", ")}`);
@@ -158,6 +162,9 @@ function selftest() {
   assert.doesNotMatch(out, /secret|TOKEN_CONTENT|KEY_CONTENT/);
   out = render("full", { ACE_ROLE: "submitter", ACE_PROFILE_LAUNCHED: "1", ACE_CAPABILITIES_JSON: JSON.stringify(closed), ACE_TOKEN_FILE: "/tmp/missing-token" });
   assert.match(out, /submit=configured-but-target-unknown/);
+  out = render("startup", { ACE_ROLE: "submitter", ACE_PROFILE_LAUNCHED: "1", ACE_TOKEN_FILE: "/tmp/missing-token" });
+  assert.match(out, /submit=not probed at startup/);
+  assert.match(out, /Next fix: If this should use Team ACE, relaunch with explicit ACE_REGISTRY_URL/);
   out = render("full", { ACE_ROLE: "retrieval", ACE_REGISTRY_URL: "https://ace-oleg-team0.ogiberstein.workers.dev" });
   assert.match(out, /global\/default ACE env/);
   out = render("full", { ACE_ROLE: "submitter", ACE_PROFILE_LAUNCHED: "1", ACE_PUBLISH_KEY_FILE: "/tmp/some-key" });
@@ -194,7 +201,7 @@ async function main() {
   }
   const out = render(startup ? "startup" : "full");
   console.log(out);
-  const d = diagnose(process.env);
+  const d = diagnose(process.env, { startup });
   if (preflight) {
     const hardMisconfig = d.role === "retrieval" || !exists(d.token) || d.warnings.length > 0 || (d.cap && d.cap.submissions_open === false);
     if (hardMisconfig) process.exit(2);

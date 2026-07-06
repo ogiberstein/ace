@@ -147,6 +147,7 @@ function reviewArtifactFixture(overrides = {}) {
       full_body_md: `## Claim\nreviewed body ${BODY_MARKER}`,
     },
     reviewed_candidate_sha256: overrides.sha || REVIEWED_SHA,
+    team_attestation: overrides.team_attestation || { required: true, attested: false, attested_at: null },
   };
 }
 
@@ -219,7 +220,7 @@ async function main() {
       ACE_REGISTRY_URL: url,
       ACE_TOKEN_FILE: tokenFile,
       ACE_CAPABILITIES_JSON: JSON.stringify({ submissions_open: false }),
-    }, "ace_submit", { draft_path: draft });
+    }, "ace_submit", { draft_path: draft, team_attestation: true });
     assert.equal(result.submission_id, "sub_test");
     assert.deepEqual(requests.map((r) => `${r.method} ${r.url}`), ["GET /v1/capabilities", "POST /v1/submissions"]);
   }, { capabilities: { submissions_open: true, search_gate_mode: "off", freshness_crons_configured: false } });
@@ -252,7 +253,7 @@ async function main() {
   // Approve missing SHA fails locally before any network call.
   await withServer(async (url, requests) => {
     const result = await callTool(adminEnv(url), "ace_submission_approve", { submission_id: "sub-20260701-abc", verdict_version: 2 });
-    assert.match(result.ace_error || "", /reviewed_candidate_sha256 required/);
+    assert.match(result.ace_error || "", /candidate_sha\/reviewed_candidate_sha256 required/);
     assert.equal(requests.length, 0, "missing SHA must fail before any network write");
   }, { capabilities: TEAM_CAPABILITIES, routes: reviewRoutes({ artifact: reviewArtifactFixture() }) });
 
@@ -270,12 +271,12 @@ async function main() {
     assert.ok(!requests.some((r) => r.method === "POST"), "stale version must not reach the decision endpoint");
   }, { capabilities: TEAM_CAPABILITIES, routes: reviewRoutes({ artifact: reviewArtifactFixture() }) });
 
-  // Pending submissions can never be approved; no bypass, no decision write.
+  // Pending Team ACE approvals require an explicit team-shared confirmation; no silent bypass.
   await withServer(async (url, requests) => {
     const result = await callTool(adminEnv(url), "ace_submission_approve", { submission_id: "sub-20260701-abc", verdict_version: 0, reviewed_candidate_sha256: REVIEWED_SHA });
-    assert.match(result.ace_error || "", /Pending submissions cannot be approved/);
+    assert.match(result.ace_error || "", /confirm_team_shared=true required/);
     assert.ok(!requests.some((r) => r.method === "POST"), "pending approval must not reach the decision endpoint");
-  }, { capabilities: TEAM_CAPABILITIES, routes: reviewRoutes({ artifact: reviewArtifactFixture({ submission: { status: "pending", verdict_version: 0 } }) }) });
+  }, { capabilities: TEAM_CAPABILITIES, routes: reviewRoutes({ artifact: reviewArtifactFixture({ submission: { status: "pending", verdict_version: 0 }, team_attestation: { required: true, attested: true, attested_at: "2026-07-06T00:00:00Z" } }) }) });
 
   // Target mismatch (local team intent vs registry public) fails closed before artifact/decision.
   await withServer(async (url, requests) => {
@@ -319,7 +320,7 @@ async function main() {
     const queue = await callTool(adminEnv(url), "ace_review_queue", { status: "pending" });
     assert.equal(queue.listed_count, 1);
     assert.equal(queue.count_exact, false);
-    assert.match(queue.submissions[0].next_action, /cannot be approved/);
+    assert.match(queue.submissions[0].next_action, /admin-review candidate/);
     assert.doesNotMatch(JSON.stringify(queue), new RegExp(BODY_MARKER));
   }, { capabilities: TEAM_CAPABILITIES, routes: reviewRoutes({ rowsByStatus: { pending: [{ id: "sub-20260701-abc", status: "pending", title: "Pending fixture", verdict_version: 0, created_at: "2026-07-01", brief_view_md: `## Claim\n${BODY_MARKER}` }] } }) });
 

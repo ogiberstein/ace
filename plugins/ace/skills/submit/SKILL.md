@@ -30,9 +30,9 @@ Unknown-intake wording while `/v1/capabilities` is not deployed on the target:
 
 3. Before calling `ace_submit`, tell the user exactly:
 
-> This sends your scrubbed ACE draft to ACE for review. Do not submit secrets, credentials, private paths, PII, or raw session logs. Nothing will become Public ACE or Team ACE team-shared unless review and admin approval pass.
+> This sends your scrubbed ACE draft to ACE for review. Do not submit secrets, credentials, PII, raw session logs, outside-team/customer data, or content you lack consent to share. On Team ACE, `team_attestation=true` asserts the content is intended for this team instance; it is an assertion, not automated proof. Nothing becomes Public ACE or Team ACE team-shared unless review/admin approval passes.
 
-4. Call `ace_submit({"draft_path":"<path>"})` and report the returned submission id/status.
+4. Call `ace_submit({"draft_path":"<path>", "team_attestation": true})` on Team ACE targets, or `ace_submit({"draft_path":"<path>"})` on Public ACE. Report the returned submission id/status.
 
 ## Role rule
 
