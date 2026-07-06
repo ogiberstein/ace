@@ -19,7 +19,7 @@ const os = require("os");
 const path = require("path");
 const { stdin, stdout, stderr } = process;
 
-const VERSION = "0.1.0";
+const VERSION = "0.1.9"; // keep in sync with ../.claude-plugin/plugin.json "version"
 const PROTOCOL_VERSION = "2024-11-05";
 
 // Some .mcp.json env interpolators pass through the literal "${VAR_NAME}"

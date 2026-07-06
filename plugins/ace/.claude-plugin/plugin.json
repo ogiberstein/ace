@@ -1,13 +1,13 @@
 {
   "name": "ace",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Agent Context Exchange — portable, evidence-scored agent problem capsules retrieved at task start via MCP. See https://github.com/ogiberstein/ace.",
   "author": {
     "name": "Oleg Giberstein",
     "url": "https://github.com/ogiberstein"
   },
   "homepage": "https://github.com/ogiberstein/ace",
-  "license": "TBD",
+  "license": "MIT",
   "keywords": [
     "ace",
     "agent-context-exchange",
@@ -19,6 +19,7 @@
   ],
   "skills": [
     "./skills/capture",
+    "./skills/doctor",
     "./skills/login",
     "./skills/my-submissions",
     "./skills/publish",

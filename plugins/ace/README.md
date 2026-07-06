@@ -22,6 +22,8 @@ This directory is the **real** ACE plugin shipped to users. For the capability s
 
 The standing-instructions snippet is the **single source of truth** for the §6.3 CLAUDE.md snippet. Edit `snippets/claude-md-snippet.txt` to change agent behavior; the SessionStart hook reads it verbatim.
 
+`hooks/ace-stop-capture-nudge.sh` ships in this directory but is **intentionally not registered** in `hooks/hooks.json`: the Stop-hook capture nudge is specified in `docs/specs/2026-07-02-team-ace-auto-nudge-capture-reminder.md` (D48) and its registration is sequenced behind the reviewer-leg and A/B review/approval smokes. Do not wire it into `hooks.json` without explicit founder approval — hooks are a D25 load-bearing surface.
+
 ## Tools
 
 Tool exposure is role-based:
@@ -165,17 +167,23 @@ node plugins/ace/scripts/login.cjs --check
 node scripts/mcp-server.cjs --selftest
 ```
 
-Runs the scan against 8 fixture cases without entering the stdio loop. Exit 0 = all pass.
+Runs the scan fixture suite plus role-gating and publish-preflight assertions without entering the stdio loop. Exit 0 = all pass.
 
 ## Install (local marketplace, for development)
 
+The local marketplace manifest lives at `.claude-plugin/marketplace.json` in the repo root (marketplace name `ace-local`):
+
 ```bash
-# From repo root:
-claude plugin marketplace add ./marketplace.json   # see ../marketplace.json (P6)
+claude plugin marketplace add /absolute/path/to/agent-context-exchange
 claude plugin install ace@ace-local
 ```
 
-Production install is via `claude plugin marketplace add github:ogiberstein/ace` once that repo is created in P6.
+Production install is via the live public marketplace repo `github.com/ogiberstein/ace` (bundled copy kept in sync by `scripts/sync-plugin-to-marketplace.sh`):
+
+```bash
+claude plugin marketplace add ogiberstein/ace --sparse .claude-plugin plugins
+claude plugin install ace
+```
 
 ## Install in OpenAI Codex
 
