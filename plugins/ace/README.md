@@ -128,7 +128,7 @@ node plugins/ace/scripts/profile-launcher.cjs \
 Dry-run any profile without launching Claude:
 
 ```bash
-CLAUDE_PLUGIN_ROOT="$PWD/plugins/ace" node plugins/ace/scripts/profile-launcher.cjs ... --print-env
+CLAUDE_PLUGIN_ROOT="$PWD/plugins/ace" node plugins/ace/scripts/profile-launcher.cjs ... --print-env 1
 ```
 
 Run `/ace:doctor` as the first command in every launched session. Expected posture:
@@ -142,20 +142,101 @@ If `/ace:doctor` reports Public ACE when you expected Team ACE, or admin when yo
 
 ## Joining a Team ACE instance
 
-A Team ACE join has three parts:
+Friend-v1 Team ACE join is a **private join packet + `/ace:doctor` proof**, not shared-table membership or invite-code infrastructure. The happy path is Claude Code launched through `plugins/ace/scripts/profile-launcher.cjs`; it sets `ACE_PROFILE_LAUNCHED=1` so `/ace:doctor` can distinguish an intentional profile from leaked global shell env.
 
-1. **Team endpoint + token file:** get the team registry URL and a separate token path such as `~/.ace/<team>/token`; run `/ace:login` (or `scripts/login.cjs --registry ... --token-file ...`) against that exact endpoint. Never print token contents.
-2. **MCP registration/profile env:** start the MCP server with explicit team env: `ACE_REGISTRY_URL`, `ACE_TARGET_NAME`, `ACE_TARGET_KIND=team`, `ACE_ROLE=retrieval|submitter|admin`, and `ACE_TOKEN_FILE`. Admin sessions also set `ACE_PUBLISH_KEY_FILE`; submitter/retrieval sessions must not.
-3. **Verify agent-initiated retrieval wiring:** run `/ace:doctor` in the launched session. It must show `Retrieval wiring: agent-initiated via SessionStart → <team> (team)` and the team endpoint. If it shows Public ACE or `[built-in default URL]`, stop: unset `ACE_REGISTRY_URL` silently falls back to Public ACE and the agent will search the wrong corpus.
+A join packet must include placeholders and paths, never token/key contents:
 
-Default topology for friend v1: one ACE endpoint per work machine. On a machine used for team work, the team instance should normally be the `ace` server loaded by the SessionStart instruction.
+1. **Team identity:** registry URL, target name, target kind `team`, and the visibility reminder: Team ACE `public` rows are **team-shared inside this isolated instance**, not Public ACE.
+2. **Separate token path:** one token file per machine/profile, for example `$HOME/.ace/<friend-slug>/claude-code-reader/token`. Run `/ace:login` inside Claude Code, or `node plugins/ace/scripts/login.cjs --registry <team-url> --token-file <token-file>` outside Claude Code. The login helper may print the GitHub device URL/code, but must never print ACE Bearer token contents.
+3. **Role/profile launch command:** retrieval, submitter, or admin, launched per session. Do not put Team ACE endpoint/token/admin-key env in `.zshrc`, `.bashrc`, direnv, LaunchAgents, or other global shell defaults.
+4. **MCP/SessionStart proof:** Claude Code should load the ACE MCP server and SessionStart hook from the plugin. `/ace:doctor` must show `Retrieval wiring: agent-initiated via SessionStart → ace-<friend-slug> (team)`.
+5. **Permission guidance:** pre-allow or explicitly approve both `ace_search` and `ace_report_reuse`. Retrieval-only requires those two tools; `ace_get` is optional only when `ACE_EXPOSE_GET=1` is intentional and doctor shows it.
 
-Existing Public ACE installs can coexist, but be explicit:
+### Claude Code join packet template
 
-- **Switch the machine to Team ACE:** relaunch the normal `ace` server/profile with the team URL/token. The standing instruction drives the team `ace_search` tool.
-- **Run both:** register distinct MCP server names such as `ace-public` and `ace-<team>`. The standing instruction only drives the server/tool name actually exposed as `ace_search` in that session; verify with `/ace:doctor` and `tools/list` rather than assuming.
+Use from the repo root or adapt paths to the installed plugin root.
 
-Pre-allow both `ace_search` and `ace_report_reuse` in project `.claude/settings.json` for the join packet, or tell the user to expect first-run permission prompts. Live Team0 findings: declining the reuse prompt can reject the whole tool batch and stall the turn while dropping the receipt. A first-run ToolSearch/load hop before `ace_search` is normal in harnesses with deferred tool schemas.
+Retrieval-only, for normal team coding work:
+
+```bash
+CLAUDE_PLUGIN_ROOT="$PWD/plugins/ace" \
+node plugins/ace/scripts/profile-launcher.cjs \
+  --target ace-<friend-slug> \
+  --kind team \
+  --url https://ace-friend-<friend-slug>.<account>.workers.dev \
+  --role retrieval \
+  --token-file "$HOME/.ace/<friend-slug>/claude-code-reader/token" \
+  -- claude
+```
+
+Submitter, for a teammate who can propose capsules but cannot publish, approve, reject, promote, delete, or administer:
+
+```bash
+CLAUDE_PLUGIN_ROOT="$PWD/plugins/ace" \
+node plugins/ace/scripts/profile-launcher.cjs \
+  --target ace-<friend-slug> \
+  --kind team \
+  --url https://ace-friend-<friend-slug>.<account>.workers.dev \
+  --role submitter \
+  --token-file "$HOME/.ace/<friend-slug>/claude-code-submitter/token" \
+  --publish-key-file '__ACE_NO_PUBLISH_KEY__' \
+  -- claude
+```
+
+Admin, only for an intentional review/approval window with the Team ACE admin key mounted:
+
+```bash
+CLAUDE_PLUGIN_ROOT="$PWD/plugins/ace" \
+node plugins/ace/scripts/profile-launcher.cjs \
+  --target ace-<friend-slug> \
+  --kind team \
+  --url https://ace-friend-<friend-slug>.<account>.workers.dev \
+  --role admin \
+  --token-file "$HOME/.ace/<friend-slug>/claude-code-admin/token" \
+  --publish-key-file "$HOME/.ace/<friend-slug>/admin/import_delete_key" \
+  -- claude
+```
+
+Dry-run a profile without launching Claude using the currently verified parser syntax:
+
+```bash
+CLAUDE_PLUGIN_ROOT="$PWD/plugins/ace" \
+node plugins/ace/scripts/profile-launcher.cjs \
+  --target ace-<friend-slug> \
+  --kind team \
+  --url https://ace-friend-<friend-slug>.<account>.workers.dev \
+  --role retrieval \
+  --token-file "$HOME/.ace/<friend-slug>/claude-code-reader/token" \
+  --print-env 1
+```
+
+Direct env-prefix examples are illustrative only; if used, keep them per-command/per-session and include `ACE_PROFILE_LAUNCHED=1`. Do not add them to shell startup files.
+
+### `/ace:doctor` join proof
+
+Run `/ace:doctor` as the first command in every launched session. Pass criteria:
+
+- Target is `Team ACE ace-<friend-slug>` and the URL matches the join packet.
+- It does not say `Public ACE`, `ace-public`, `[built-in default URL]`, or `ACE_REGISTRY_URL unset` during Team ACE work.
+- Role matches the intended packet:
+  - retrieval: retrieval yes; submit/publish/admin no; `ace_get` absent unless `ACE_EXPOSE_GET=1` was intentional;
+  - submitter: retrieval yes; submit yes; publish/admin no; publish key absent;
+  - admin: admin tools present; admin key path configured/present; key contents hidden.
+- Token file is configured and present for **all** roles. Verify mode separately unless doctor is enhanced: `stat -c '%a %n' <token-file>` should show `600`, or run `node plugins/ace/scripts/login.cjs --registry <team-url> --token-file <token-file> --check`.
+- Visibility says team-shared inside this Team ACE instance, not Public ACE.
+- Retrieval wiring says `agent-initiated via SessionStart → ace-<friend-slug> (team)`.
+- Global env drift is absent. If target, role, token, key, or tool table is wrong, stop and relaunch.
+
+### Public ACE coexistence and fallback control
+
+Existing Public ACE installs can coexist with Team ACE, but the active session must be explicit:
+
+- **Switch this work machine to Team ACE:** keep existing Public ACE token/key files intact; relaunch the normal `ace` MCP server/profile with the Team ACE URL/token; run `/ace:doctor`; confirm the SessionStart instruction drives Team ACE `ace_search`.
+- **Run both:** use distinct names such as `ace-public` and `ace-<friend-slug>`; keep separate token files and admin key files; run `/ace:doctor` after switching contexts. If both are registered, do not assume the agent will choose the team corpus.
+
+Negative control for setup docs/smoke: a no-profile/default launch should report Public ACE / `[built-in default URL]`. That proves fallback behavior, not a successful team join. If `/ace:doctor` reports Public ACE, `ace-public`, `[built-in default URL]`, or an unset registry URL during Team ACE work, stop and relaunch with the Team ACE profile. Otherwise your agent is searching the global Public ACE corpus, not the isolated team corpus.
+
+Setup and smoke searches must not call/report reuse. Call `ace_report_reuse(applied=true)` only when a retrieved capsule changes a real task plan. Synthetic blind-probe receipts, including accidental `applied=true`, must be excluded or annotated.
 
 ## Login outside Claude Code
 
@@ -212,7 +293,7 @@ Codex speaks MCP but does **not** auto-load this plugin's bundled `.mcp.json` (u
 ./setup-codex.sh                 # live registry, server name "ace"
 ```
 
-The script runs `codex mcp add` for you and points at the live registry by default. For an isolated instance (e.g. a sandbox) pass `--registry`, `--token-file`, and `--publish-key-file`. Codex has no SessionStart hook, so call `ace_search` explicitly (or via `/ace:search`).
+The script runs `codex mcp add` for you and points at the live registry by default. For an isolated Team ACE instance, current `setup-codex.sh` supports **retrieval-only, explicit-search** registration: pass `--registry` and `--token-file`, use a distinct server name such as `ace-<friend-slug>`, and omit `--publish-key-file`. Codex has no Claude Code SessionStart hook, so call `ace_search` explicitly or add a project/profile instruction until Codex-specific agent-initiation is designed. Do not document Codex submitter/admin as supported by the current script; adding `--publish-key-file` alone does not set `ACE_ROLE=admin` or the Team ACE profile/doctor metadata.
 
 ## Privacy
 
