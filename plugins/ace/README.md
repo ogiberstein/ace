@@ -154,18 +154,25 @@ A join packet must include placeholders and paths, never token/key contents:
 
 ### Claude Code join packet template
 
-Use from the repo root or adapt paths to the installed plugin root.
+Use from the repo root or adapt paths to the installed plugin root. Replace these safe example values with the team's real non-secret slug and registry URL before sharing the packet.
+
+```bash
+FRIEND_SLUG="acme"
+TEAM_URL="https://ace-friend-acme.ogiberstein.workers.dev"
+TARGET_NAME="ace-$FRIEND_SLUG"
+ACE_HOME="$HOME/.ace/$FRIEND_SLUG"
+```
 
 Retrieval-only, for normal team coding work:
 
 ```bash
 CLAUDE_PLUGIN_ROOT="$PWD/plugins/ace" \
 node plugins/ace/scripts/profile-launcher.cjs \
-  --target ace-<friend-slug> \
+  --target "$TARGET_NAME" \
   --kind team \
-  --url https://ace-friend-<friend-slug>.<account>.workers.dev \
+  --url "$TEAM_URL" \
   --role retrieval \
-  --token-file "$HOME/.ace/<friend-slug>/claude-code-reader/token" \
+  --token-file "$ACE_HOME/claude-code-reader/token" \
   -- claude
 ```
 
@@ -174,11 +181,11 @@ Submitter, for a teammate who can propose capsules but cannot publish, approve, 
 ```bash
 CLAUDE_PLUGIN_ROOT="$PWD/plugins/ace" \
 node plugins/ace/scripts/profile-launcher.cjs \
-  --target ace-<friend-slug> \
+  --target "$TARGET_NAME" \
   --kind team \
-  --url https://ace-friend-<friend-slug>.<account>.workers.dev \
+  --url "$TEAM_URL" \
   --role submitter \
-  --token-file "$HOME/.ace/<friend-slug>/claude-code-submitter/token" \
+  --token-file "$ACE_HOME/claude-code-submitter/token" \
   --publish-key-file '__ACE_NO_PUBLISH_KEY__' \
   -- claude
 ```
@@ -188,12 +195,12 @@ Admin, only for an intentional review/approval window with the Team ACE admin ke
 ```bash
 CLAUDE_PLUGIN_ROOT="$PWD/plugins/ace" \
 node plugins/ace/scripts/profile-launcher.cjs \
-  --target ace-<friend-slug> \
+  --target "$TARGET_NAME" \
   --kind team \
-  --url https://ace-friend-<friend-slug>.<account>.workers.dev \
+  --url "$TEAM_URL" \
   --role admin \
-  --token-file "$HOME/.ace/<friend-slug>/claude-code-admin/token" \
-  --publish-key-file "$HOME/.ace/<friend-slug>/admin/import_delete_key" \
+  --token-file "$ACE_HOME/claude-code-admin/token" \
+  --publish-key-file "$ACE_HOME/admin/import_delete_key" \
   -- claude
 ```
 
@@ -202,11 +209,11 @@ Dry-run a profile without launching Claude using the currently verified parser s
 ```bash
 CLAUDE_PLUGIN_ROOT="$PWD/plugins/ace" \
 node plugins/ace/scripts/profile-launcher.cjs \
-  --target ace-<friend-slug> \
+  --target "$TARGET_NAME" \
   --kind team \
-  --url https://ace-friend-<friend-slug>.<account>.workers.dev \
+  --url "$TEAM_URL" \
   --role retrieval \
-  --token-file "$HOME/.ace/<friend-slug>/claude-code-reader/token" \
+  --token-file "$ACE_HOME/claude-code-reader/token" \
   --print-env 1
 ```
 
@@ -222,7 +229,7 @@ Run `/ace:doctor` as the first command in every launched session. Pass criteria:
   - retrieval: retrieval yes; submit/publish/admin no; `ace_get` absent unless `ACE_EXPOSE_GET=1` was intentional;
   - submitter: retrieval yes; submit yes; publish/admin no; publish key absent;
   - admin: admin tools present; admin key path configured/present; key contents hidden.
-- Token file is configured and present for **all** roles. Verify mode separately unless doctor is enhanced: `stat -c '%a %n' <token-file>` should show `600`, or run `node plugins/ace/scripts/login.cjs --registry <team-url> --token-file <token-file> --check`.
+- Token file is configured and present for **all** roles. Verify mode separately unless doctor is enhanced: run `node plugins/ace/scripts/login.cjs --registry "$TEAM_URL" --token-file "<token-file>" --check`; for file mode use Linux `stat -c '%a %n' <token-file>` or macOS `stat -f '%Lp %N' <token-file>` and expect `600`.
 - Visibility says team-shared inside this Team ACE instance, not Public ACE.
 - Retrieval wiring says `agent-initiated via SessionStart → ace-<friend-slug> (team)`.
 - Global env drift is absent. If target, role, token, key, or tool table is wrong, stop and relaunch.
