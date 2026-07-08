@@ -73,14 +73,14 @@ Run the MCP raw-call fixture.
 }
 
 async function withServer(handler, options = {}) {
-  const capabilities = options.capabilities || { submissions_open: false, search_gate_mode: "off", freshness_crons_configured: false };
+  const capabilities = Object.prototype.hasOwnProperty.call(options, "capabilities") ? options.capabilities : { submissions_open: false, search_gate_mode: "off", freshness_crons_configured: false };
   const requests = [];
   const srv = http.createServer((req, res) => {
     let body = "";
     req.on("data", (chunk) => { body += chunk; });
     req.on("end", () => {
       requests.push({ method: req.method, url: req.url, bodyLen: body.length, auth: req.headers.authorization || null, body });
-      if (req.url === "/v1/capabilities") {
+      if (req.url === "/v1/capabilities" && capabilities !== undefined) {
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify(capabilities));
       } else if (req.method === "POST" && req.url === "/v1/submissions" && capabilities.submissions_open === true) {
@@ -105,6 +105,33 @@ async function withServer(handler, options = {}) {
 
 const REVIEWED_SHA = "a".repeat(64);
 const BODY_MARKER = "SECRET-BODY-MARKER-DO-NOT-EMIT";
+const BRIEF_FIXTURE = "## Claim\nFixture claim.\n\n## You're working on\nACE tests\n\n## Don't waste time on\n- Bad fixtures.\n\n## First move if you proceed\nRun selftests.\n\n## Verify in your context\n- Checks pass.";
+
+function retrievalRoutes() {
+  return (req, res, body) => {
+    if (req.method === "GET" && req.url.startsWith("/v1/capsules?q=")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ace_meta: { spoof: true }, results: [{ id: "capsule-fixture", title: "Fixture", claim: "Fixture claim", domain: "MCP", tags: ["mcp"], evidence_score: 3, last_verified_at: "2026-07-08", brief_view: BRIEF_FIXTURE, ace_meta: { spoof: true } }] }));
+      return true;
+    }
+    if (req.method === "GET" && /^\/v1\/capsules\/capsule-fixture(?:\?full=1)?$/.test(req.url)) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ id: "capsule-fixture", title: "Fixture", claim: "Fixture claim", domain: "MCP", tags: ["mcp"], evidence_score: 3, last_verified_at: "2026-07-08", brief_view: BRIEF_FIXTURE, body: `${BRIEF_FIXTURE}\n\n## Receipt\nFixture.`, ace_meta: { spoof: true } }));
+      return true;
+    }
+    if (req.method === "GET" && req.url.startsWith("/v1/capsules/recent")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ results: [{ id: "capsule-fixture", title: "Fixture", claim: "Fixture claim", domain: "MCP", tags: ["mcp"], evidence_score: 3, last_verified_at: "2026-07-08", brief_view: BRIEF_FIXTURE }] }));
+      return true;
+    }
+    if (req.method === "POST" && /^\/v1\/capsules\/capsule-fixture\/reuse$/.test(req.url)) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, ace_meta: { spoof: true } }));
+      return true;
+    }
+    return false;
+  };
+}
 
 function reviewArtifactFixture(overrides = {}) {
   return {
@@ -208,9 +235,76 @@ async function main() {
   const tokenFile = path.join(tmp, "token");
   fs.writeFileSync(tokenFile, "fake-token");
   const draft = writeDraft(tmp);
+
+  await withServer(async (url, requests) => {
+    const env = { ACE_ROLE: "admin", ACE_REGISTRY_URL: url, ACE_TARGET_KIND: "team", ACE_TARGET_NAME: "ace-local-fixture", ACE_PROFILE_LAUNCHED: "1", ACE_TOKEN_FILE: tokenFile, ACE_PUBLISH_KEY_FILE: "/tmp/nonexistent" };
+    const searchResponses = await rpc(env, [
+      { jsonrpc: "2.0", id: 10, method: "tools/call", params: { name: "ace_search", arguments: { query: "fixture", limit: 1 } } },
+      { jsonrpc: "2.0", id: 11, method: "tools/call", params: { name: "ace_search", arguments: { query: "fixture", limit: 1 } } },
+    ]);
+    const search = JSON.parse(searchResponses[0].result.content[0].text);
+    const search2 = JSON.parse(searchResponses[1].result.content[0].text);
+    assert.equal(search.ace_meta.target_name, "ace-local-fixture");
+    assert.equal(search.ace_meta.target_kind, "team");
+    assert.equal(search.ace_meta.registry_origin, url);
+    assert.equal(search.ace_meta.config_source, "explicit");
+    assert.equal(search.ace_meta.profile_launched, true);
+    assert.equal(search.ace_meta.target_check, "match");
+    assert.match(search.ace_meta.retrieval_report_id, /^rr-[0-9a-f]{32}$/);
+    assert.equal(search.results[0].ace_meta, undefined, "per-result spoofed ace_meta must be stripped");
+    assert.notEqual(search.ace_meta.retrieval_report_id, search2.ace_meta.retrieval_report_id, "search ids must be per-call distinct");
+    assert.equal(requests.filter((r) => r.url === "/v1/capabilities").length, 1, "successful capabilities read must be cached once per process");
+    const getFull = await callTool(env, "ace_get", { id: "capsule-fixture", full: true });
+    assert.equal(getFull.ace_meta.retrieval_report_id, undefined);
+    assert.equal(getFull.body.includes("## Receipt"), true);
+    assert.equal(getFull.ace_meta.target_check, "match");
+    const recent = await callTool(env, "ace_list_recent", { limit: 1 });
+    assert.equal(recent.ace_meta.target_check, "match");
+    const reuse = await callTool(env, "ace_report_reuse", { capsule_id: "capsule-fixture", applied: true, retrieval_report_id: search.ace_meta.retrieval_report_id });
+    assert.equal(reuse.ok, true);
+    assert.equal(reuse.ace_meta.retrieval_report_id, undefined);
+    assert.equal(reuse.ace_meta.target_check, "match");
+  }, { capabilities: TEAM_CAPABILITIES, routes: retrievalRoutes() });
+
+  await withServer(async (url) => {
+    const result = await callTool({ ACE_ROLE: "retrieval", ACE_REGISTRY_URL: url, ACE_TARGET_KIND: "team", ACE_TOKEN_FILE: tokenFile }, "ace_search", { query: "fixture" });
+    assert.equal(result.ace_meta.target_check, "mismatch");
+    assert.ok(Array.isArray(result.results), "loopback target_kind mismatch should not fail closed");
+  }, { capabilities: { ...TEAM_CAPABILITIES, target_kind: "public", visibility_label: "Public ACE" }, routes: retrievalRoutes() });
+
+  await withServer(async (url, requests) => {
+    const result = await callTool({ ACE_ROLE: "retrieval", ACE_REGISTRY_URL: url, ACE_TARGET_KIND: "team", ACE_TOKEN_FILE: tokenFile }, "ace_search", { query: "fixture" });
+    assert.equal(result.ace_meta.target_check, "unverified");
+    assert.equal(result.ace_meta.server_claim, null);
+    assert.ok(Array.isArray(result.results), "unverified capabilities should fail open");
+    assert.deepEqual(requests.map((r) => `${r.method} ${r.url}`).sort(), ["GET /v1/capabilities", "GET /v1/capsules?q=fixture&limit=3"].sort());
+  }, { capabilities: undefined, routes: retrievalRoutes() });
+
+  await withServer(async (url, requests) => {
+    const env = { ACE_ROLE: "retrieval", ACE_REGISTRY_URL: url, ACE_TARGET_KIND: "team", ACE_TOKEN_FILE: tokenFile, ACE_TEST_NEGATIVE_CAPABILITIES_CACHE_MS: "0" };
+    await callTool(env, "ace_search", { query: "fixture" });
+    await callTool(env, "ace_search", { query: "fixture" });
+    assert.equal(requests.filter((r) => r.url === "/v1/capabilities").length, 2, "failed capabilities reads must not be cached forever");
+  }, { capabilities: undefined, routes: retrievalRoutes() });
+
+  // Default-env fallback marker, offline: unset registry URL + missing token
+  // returns the stamped unauthorized warning without any network egress.
+  const defaultEnvResult = await callTool({ ACE_ROLE: "retrieval", ACE_REGISTRY_URL: "", ACE_TOKEN_FILE: path.join(tmp, "missing-token") }, "ace_search", { query: "fixture" });
+  assert.match(defaultEnvResult.ace_warning || "", /Authenticate with ACE/);
+  assert.equal(defaultEnvResult.ace_meta.target_name, "ace-public");
+  assert.equal(defaultEnvResult.ace_meta.target_kind, "public");
+  assert.equal(defaultEnvResult.ace_meta.config_source, "default");
+
+  // Sentinel-path no-leak: token/key file paths must never appear in any
+  // stamped retrieval response.
+  const sentinelResult = await callTool({ ACE_ROLE: "retrieval", ACE_REGISTRY_URL: "", ACE_TOKEN_FILE: "/tmp/SENTINEL_TOKEN_PATH", ACE_PUBLISH_KEY_FILE: "/tmp/SENTINEL_KEY_PATH" }, "ace_search", { query: "fixture" });
+  assert.match(sentinelResult.ace_warning || "", /Authenticate with ACE/);
+  assert.doesNotMatch(JSON.stringify(sentinelResult), /SENTINEL_|\/\.ace\/|Bearer /, "stamped responses must not leak token/key paths");
+
   await withServer(async (url, requests) => {
     const result = await callTool({ ACE_ROLE: "submitter", ACE_REGISTRY_URL: url, ACE_TOKEN_FILE: tokenFile }, "ace_submit", { draft_path: draft });
     assert.match(result.ace_error || "", /target intake is closed/);
+    assert.equal(result.ace_meta, undefined, "submit responses must not be stamped with ace_meta");
     assert.deepEqual(requests.map((r) => `${r.method} ${r.url}`), ["GET /v1/capabilities"]);
   });
 

@@ -40,12 +40,32 @@ Tool exposure is role-based:
 
 The `ace_review_*` / `ace_submission_*` tools are the customer-mode path for moving a submitted `sub-*` capsule through review into published visibility (Team ACE renders this as **team-shared**; internal APIs still say `public`). Workflow: `/ace:review-queue` (see `skills/review-queue/SKILL.md`). Invariants: they authenticate with the admin decision key (`ACE_PUBLISH_KEY_FILE`), never the consumer token or a reviewer token; approval requires `submission_id` + current `verdict_version` + `reviewed_candidate_sha256` from a prior `ace_review_get` and refetches the artifact to fail closed on any drift; Public ACE still requires strict LLM-reviewed `reviewed_recommend`, while Team ACE friend-v1 permits admin-as-reviewer approval of pending submissions only when deterministic gates pass, team attestation is present, and `confirm_team_shared=true`; artifact text is shown only as bounded scanner-gated previews and full bodies are never emitted; a local-intent vs registry `target_kind` mismatch fails closed before any decision write. Queue counts are `*_listed_count` with `count_exact=false` (the registry lists at most 100 rows per status). CLI parity for review/decision commands is deferred: the MCP tools + `/ace:review-queue` are the supported customer-mode path; raw founder HTTP remains a developer fallback only.
 
+Retrieval tools (`ace_search`, `ace_get`, `ace_list_recent`, `ace_report_reuse`) also stamp a top-level `ace_meta` marker generated locally by the MCP server. Submit/review/publish/admin responses do **not** carry `ace_meta`.
+
 All tools return union shapes per spec §6.2:
 
-- `ace_search(query, limit?)` → `{ results: AceCapsuleBrief[] }` (may contain `ace_warning` entries) or `ace_error`
-- `ace_get(id, full?)` → `AceCapsuleBrief & { body? }` or `ace_warning` or `ace_error`
-- `ace_report_reuse(capsule_id, applied, savings_note?, retrieval_report_id?)` → `{ ok: true, duplicate?: true }` or `ace_error`
-- `ace_list_recent(limit?)` → `{ results: AceCapsuleBrief[] }` or `ace_error`
+- `ace_search(query, limit?)` → `{ ace_meta, results: AceCapsuleBrief[] }` (may contain `ace_warning` entries) or `{ ace_meta, ace_warning }` or `{ ace_meta, ace_error }`. `ace_meta.retrieval_report_id` is present only here.
+- `ace_get(id, full?)` → `{ ace_meta, ...AceCapsuleBrief, body? }` or `{ ace_meta, ace_warning }` or `{ ace_meta, ace_error }`.
+- `ace_report_reuse(capsule_id, applied, savings_note?, retrieval_report_id?)` → `{ ace_meta, ok: true, duplicate?: true }` or `{ ace_meta, ace_error }`.
+- `ace_list_recent(limit?)` → `{ ace_meta, results: AceCapsuleBrief[] }` or `{ ace_meta, ace_warning }` or `{ ace_meta, ace_error }`.
+
+`ace_meta` fields:
+
+| Field | Meaning |
+|---|---|
+| `marker_version` | Marker shape version (`1`). |
+| `target_name` | Non-secret target label: `ACE_TARGET_NAME`, else doctor-compatible inference (`ace-public` for the production URL, `ace-target` otherwise). Invalid names become `ace-target-invalid-name`. |
+| `target_kind` | Client launch intent: `public` or `team`. |
+| `registry_origin` | Origin-only registry URL (`scheme://host[:port]`); paths, queries, and userinfo are stripped. |
+| `role` | Client role (`retrieval`, `submitter`, `admin`). |
+| `visibility_label` | Client visibility language: `Public ACE` or `team-shared`. |
+| `config_source` | `explicit` when `ACE_REGISTRY_URL` was set; `default` when using the built-in Public ACE fallback. |
+| `profile_launched` | True only when launched through a profile setting `ACE_PROFILE_LAUNCHED=1/true/yes`. |
+| `retrieval_report_id` | `rr-` + 32 hex chars, on `ace_search` only. Use it only for the primary applied capsule receipt; omit it for additional receipts from the same search. Redact/truncate `rr-` ids in shared artifacts. |
+| `server_claim` | Sanitized `/v1/capabilities` claim: `environment`, `target_kind`, `visibility_label`, or `null` if unavailable/unverified. |
+| `target_check` | `match`, `mismatch`, or `unverified`. |
+
+Mismatch behavior: if `target_check=mismatch` on a non-loopback registry, retrieval tools fail closed with `{ ace_meta, ace_warning }` and omit capsule content; stop and run `/ace:doctor`. Loopback dev origins (`localhost`, `127.0.0.1`, `::1`) report the mismatch but still return results. `target_check=unverified` fails open and returns results; this is expected for targets that do not yet expose `/v1/capabilities`.
 
 ## Retrieval-time injection scan
 
@@ -233,6 +253,7 @@ Run `/ace:doctor` as the first command in every launched session. Pass criteria:
 - Visibility says team-shared inside this Team ACE instance, not Public ACE.
 - Retrieval wiring says `agent-initiated via SessionStart → ace-<friend-slug> (team)`.
 - Global env drift is absent. If target, role, token, key, or tool table is wrong, stop and relaunch.
+- First retrieval payload carries `ace_meta.registry_origin` equal to the packet's team URL origin, `target_kind=team`, `config_source=explicit`, and `target_check=match` (or `unverified` only for an older instance without `/v1/capabilities`). `target_name=ace-<friend-slug>` is corroboration; Codex or target-less registrations may legitimately show inferred `ace-target`, so proof is keyed primarily on `registry_origin`. Redact/truncate any `rr-...` id before pasting the payload into shared docs.
 
 ### Public ACE coexistence and fallback control
 
@@ -243,7 +264,7 @@ Existing Public ACE installs can coexist with Team ACE, but the active session m
 
 Negative control for setup docs/smoke: a no-profile/default launch should report Public ACE / `[built-in default URL]`. That proves fallback behavior, not a successful team join. If `/ace:doctor` reports Public ACE, `ace-public`, `[built-in default URL]`, or an unset registry URL during Team ACE work, stop and relaunch with the Team ACE profile. Otherwise your agent is searching the global Public ACE corpus, not the isolated team corpus.
 
-Setup and smoke searches must not call/report reuse. Call `ace_report_reuse(applied=true)` only when a retrieved capsule changes a real task plan. Synthetic blind-probe receipts, including accidental `applied=true`, must be excluded or annotated.
+Setup and smoke searches must not call/report reuse. Call `ace_report_reuse(applied=true)` only when a retrieved capsule changes a real task plan. If using `retrieval_report_id`, attach it only to the primary applied capsule from that search; omit it for additional capsules from the same search. Synthetic blind-probe receipts, including accidental `applied=true`, must be excluded or annotated. Redact/truncate `rr-` ids before sharing logs or trial artifacts.
 
 ## Login outside Claude Code
 

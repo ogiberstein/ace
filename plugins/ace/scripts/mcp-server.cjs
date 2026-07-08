@@ -17,9 +17,10 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const crypto = require("crypto");
 const { stdin, stdout, stderr } = process;
 
-const VERSION = "0.1.9"; // keep in sync with ../.claude-plugin/plugin.json "version"
+const VERSION = "0.1.10"; // keep in sync with ../.claude-plugin/plugin.json "version"
 const PROTOCOL_VERSION = "2024-11-05";
 
 // Some .mcp.json env interpolators pass through the literal "${VAR_NAME}"
@@ -31,7 +32,9 @@ function envOrDefault(value, fallback) {
 }
 // Ships the production registry as the default so a fresh install works with
 // zero config; local dev points at a Worker via ACE_REGISTRY_URL=http://localhost:8787.
-const REGISTRY_URL = envOrDefault(process.env.ACE_REGISTRY_URL, "https://ace-registry.ogiberstein.workers.dev").replace(/\/$/, "");
+const DEFAULT_REGISTRY_URL = "https://ace-registry.ogiberstein.workers.dev";
+const EXPLICIT_REGISTRY_URL = !!envOrDefault(process.env.ACE_REGISTRY_URL, "");
+const REGISTRY_URL = envOrDefault(process.env.ACE_REGISTRY_URL, DEFAULT_REGISTRY_URL).replace(/\/$/, "");
 const TOKEN_FILE = envOrDefault(process.env.ACE_TOKEN_FILE, path.join(os.homedir(), ".ace", "token"));
 const DEFAULT_SEARCH_LIMIT = 3;
 const MAX_SEARCH_LIMIT = 10;
@@ -59,6 +62,34 @@ function resolveTargetKind() {
   if (explicit === "team" || explicit === "public") return explicit;
   return /ace-registry\.ogiberstein\.workers\.dev/.test(REGISTRY_URL) ? "public" : "team";
 }
+function inferTargetName() {
+  return /ace-registry\.ogiberstein\.workers\.dev/.test(REGISTRY_URL) ? "ace-public" : "ace-target";
+}
+function sanitizeTargetName(value) {
+  const raw = String(value || "").trim();
+  return /^[a-z0-9][a-z0-9._-]{0,63}$/i.test(raw) ? raw : "ace-target-invalid-name";
+}
+const TARGET_NAME = sanitizeTargetName(envOrDefault(process.env.ACE_TARGET_NAME, inferTargetName()));
+function registryOrigin() {
+  try {
+    return new URL(REGISTRY_URL).origin;
+  } catch {
+    return "invalid-registry-url";
+  }
+}
+const REGISTRY_ORIGIN = registryOrigin();
+function profileLaunched() {
+  return /^(1|true|yes)$/i.test(String(envOrDefault(process.env.ACE_PROFILE_LAUNCHED, "") || ""));
+}
+function isLoopbackOrigin(origin) {
+  try {
+    const host = new URL(origin).hostname.toLowerCase();
+    return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
+  } catch {
+    return false;
+  }
+}
+const RETRIEVAL_META_TOOLS = new Set(["ace_search", "ace_get", "ace_list_recent", "ace_report_reuse"]);
 // Founder/admin publish key. Non-admin roles must never fall back to the
 // default ~/.ace/publish_key path; callTool rejects admin tools before any key read.
 const PUBLISH_KEY_FILE = ACE_ROLE === "admin"
@@ -203,7 +234,7 @@ const ALL_TOOL_DEFS = [
   {
     name: "ace_report_reuse",
     description:
-      "Report whether a previously retrieved capsule changed the agent's plan. applied=true if the capsule's guidance changed at least one decision; false if read but not applied. Include retrieval_report_id from the original ace_search response to dedupe retries.",
+      "Report whether a previously retrieved capsule changed the agent's plan. applied=true if the capsule's guidance changed at least one decision; false if read but not applied. Include retrieval_report_id from the original ace_search response only for the primary applied capsule receipt; omit it for additional capsules from the same search. Redact/truncate rr- ids in shared artifacts.",
     inputSchema: {
       type: "object",
       properties: {
@@ -473,6 +504,12 @@ function isToolAllowed(name) {
 // Tool implementations
 // ---------------------------------------------------------------------------
 async function callTool(name, args) {
+  const result = await dispatchTool(name, args);
+  if (!RETRIEVAL_META_TOOLS.has(name)) return result;
+  return stampAceMeta(name, result);
+}
+
+async function dispatchTool(name, args) {
   if (!isToolAllowed(name)) {
     return aceError(`unknown tool for ACE role ${ACE_ROLE}: ${name}`, "invalid_request");
   }
@@ -497,6 +534,9 @@ async function callTool(name, args) {
     );
   }
 
+  const cachedMismatch = cachedRetrievalMismatchWarning();
+  if (RETRIEVAL_META_TOOLS.has(name) && cachedMismatch) return cachedMismatch;
+
   if (name === "ace_search") return await aceSearch(token, args);
   if (name === "ace_get") return await aceGet(token, args);
   if (name === "ace_report_reuse") return await aceReportReuse(token, args);
@@ -507,14 +547,139 @@ async function callTool(name, args) {
   return aceError(`unknown tool: ${name}`, "invalid_request");
 }
 
+function sanitizeClaimString(value) {
+  if (value === undefined || value === null) return "invalid";
+  let out;
+  try {
+    out = String(value);
+  } catch {
+    return "invalid";
+  }
+  out = out.replace(/[^A-Za-z0-9 ._-]/g, "").slice(0, 64).trim();
+  return out || "invalid";
+}
+
+function sanitizeServerClaim(cap) {
+  if (!cap || typeof cap !== "object") return null;
+  const targetKind = cap.target_kind === "public" || cap.target_kind === "team" ? cap.target_kind : null;
+  if (!targetKind) return null;
+  return {
+    environment: sanitizeClaimString(cap.environment),
+    target_kind: targetKind,
+    visibility_label: sanitizeClaimString(cap.visibility_label),
+  };
+}
+
+const retrievalCapabilitiesCache = {
+  status: "empty",
+  cap: undefined,
+  failedAt: 0,
+  promise: null,
+};
+const NEGATIVE_CAPABILITIES_CACHE_MS = process.env.ACE_TEST_NEGATIVE_CAPABILITIES_CACHE_MS
+  ? Math.max(0, parseInt(process.env.ACE_TEST_NEGATIVE_CAPABILITIES_CACHE_MS, 10) || 0)
+  : 60_000;
+
+async function loadRetrievalCapabilitiesCached() {
+  if (retrievalCapabilitiesCache.status === "success") return retrievalCapabilitiesCache.cap;
+  if (retrievalCapabilitiesCache.status === "failure" && Date.now() - retrievalCapabilitiesCache.failedAt < NEGATIVE_CAPABILITIES_CACHE_MS) return undefined;
+  if (retrievalCapabilitiesCache.promise) return retrievalCapabilitiesCache.promise;
+  retrievalCapabilitiesCache.promise = (async () => {
+    try {
+      const cap = await loadRegistryCapabilities();
+      if (cap !== undefined) {
+        retrievalCapabilitiesCache.status = "success";
+        retrievalCapabilitiesCache.cap = cap;
+        return cap;
+      }
+      retrievalCapabilitiesCache.status = "failure";
+      retrievalCapabilitiesCache.failedAt = Date.now();
+      retrievalCapabilitiesCache.cap = undefined;
+      return undefined;
+    } finally {
+      retrievalCapabilitiesCache.promise = null;
+    }
+  })();
+  return retrievalCapabilitiesCache.promise;
+}
+
+function targetCheckFromCap(cap) {
+  if (REGISTRY_ORIGIN === "invalid-registry-url") return "unverified";
+  const claim = sanitizeServerClaim(cap);
+  if (!claim) return "unverified";
+  return claim.target_kind === TARGET_KIND ? "match" : "mismatch";
+}
+
+function failClosedForTargetCheck(check) {
+  return check === "mismatch" && !isLoopbackOrigin(REGISTRY_ORIGIN);
+}
+
+function targetMismatchWarning(cap) {
+  const claim = sanitizeServerClaim(cap);
+  const serverKind = claim?.target_kind || "unknown";
+  return aceWarning(
+    `target mismatch: this profile is configured for a ${TARGET_KIND} target but the registry reports target_kind=${serverKind}; stop, run /ace:doctor, and relaunch the intended profile before using retrieval results.`,
+    "target_mismatch",
+  );
+}
+
+function cachedRetrievalMismatchWarning() {
+  if (retrievalCapabilitiesCache.status !== "success") return null;
+  const check = targetCheckFromCap(retrievalCapabilitiesCache.cap);
+  return failClosedForTargetCheck(check) ? targetMismatchWarning(retrievalCapabilitiesCache.cap) : null;
+}
+
+async function gateRetrievalResult(fetchPromise, capPromise) {
+  const [resp, cap] = await Promise.all([fetchPromise, capPromise]);
+  const check = targetCheckFromCap(cap);
+  if (failClosedForTargetCheck(check)) return { blocked: targetMismatchWarning(cap), resp: null, cap };
+  return { blocked: null, resp, cap };
+}
+
+function stripAceMeta(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const out = { ...value };
+  delete out.ace_meta;
+  return out;
+}
+
+function buildAceMeta(toolName) {
+  const cap = retrievalCapabilitiesCache.status === "success" ? retrievalCapabilitiesCache.cap : undefined;
+  const meta = {
+    marker_version: 1,
+    target_name: TARGET_NAME,
+    target_kind: TARGET_KIND,
+    registry_origin: REGISTRY_ORIGIN,
+    role: ACE_ROLE,
+    visibility_label: TARGET_KIND === "team" ? "team-shared" : "Public ACE",
+    config_source: EXPLICIT_REGISTRY_URL ? "explicit" : "default",
+    profile_launched: profileLaunched(),
+    server_claim: sanitizeServerClaim(cap),
+    target_check: targetCheckFromCap(cap),
+  };
+  if (toolName === "ace_search") meta.retrieval_report_id = `rr-${crypto.randomBytes(16).toString("hex")}`;
+  return meta;
+}
+
+function stampAceMeta(toolName, result) {
+  const clean = stripAceMeta(result);
+  if (clean && typeof clean === "object" && Array.isArray(clean.results)) {
+    clean.results = clean.results.map(stripAceMeta);
+  }
+  return { ace_meta: buildAceMeta(toolName), ...(clean && typeof clean === "object" ? clean : {}) };
+}
+
 async function aceSearch(token, args) {
   const q = String(args.query || "").trim();
   if (!q) return aceError("query required", "invalid_request");
   const limit = clampInt(args.limit, DEFAULT_SEARCH_LIMIT, 1, MAX_SEARCH_LIMIT);
   const url = `${REGISTRY_URL}/v1/capsules?q=${encodeURIComponent(q)}&limit=${limit}`;
-  const resp = await registryFetch(url, token);
+  const gated = await gateRetrievalResult(registryFetch(url, token), loadRetrievalCapabilitiesCached());
+  if (gated.blocked) return gated.blocked;
+  const resp = gated.resp;
   if (resp.error) return resp.error;
-  const results = Array.isArray(resp.body.results) ? resp.body.results : [];
+  const body = stripAceMeta(resp.body);
+  const results = Array.isArray(body.results) ? body.results : [];
   const scanned = await Promise.all(
     results.map((r) => scanAndShape(r, token)),
   );
@@ -526,9 +691,11 @@ async function aceGet(token, args) {
   if (!id) return aceError("id required", "invalid_request");
   const full = args.full === true || args.full === "true";
   const url = `${REGISTRY_URL}/v1/capsules/${encodeURIComponent(id)}${full ? "?full=1" : ""}`;
-  const resp = await registryFetch(url, token);
+  const gated = await gateRetrievalResult(registryFetch(url, token), loadRetrievalCapabilitiesCached());
+  if (gated.blocked) return gated.blocked;
+  const resp = gated.resp;
   if (resp.error) return resp.error;
-  return await scanAndShape(resp.body, token, { full });
+  return await scanAndShape(stripAceMeta(resp.body), token, { full });
 }
 
 async function aceReportReuse(token, args) {
@@ -544,20 +711,25 @@ async function aceReportReuse(token, args) {
       : undefined,
   };
   const url = `${REGISTRY_URL}/v1/capsules/${encodeURIComponent(id)}/reuse`;
-  const resp = await registryFetch(url, token, {
+  const gated = await gateRetrievalResult(registryFetch(url, token, {
     method: "POST",
     body: JSON.stringify(body),
-  });
+  }), loadRetrievalCapabilitiesCached());
+  if (gated.blocked) return gated.blocked;
+  const resp = gated.resp;
   if (resp.error) return resp.error;
-  return resp.body;
+  return stripAceMeta(resp.body);
 }
 
 async function aceListRecent(token, args) {
   const limit = clampInt(args.limit, 10, 1, 50);
   const url = `${REGISTRY_URL}/v1/capsules/recent?limit=${limit}`;
-  const resp = await registryFetch(url, token);
+  const gated = await gateRetrievalResult(registryFetch(url, token), loadRetrievalCapabilitiesCached());
+  if (gated.blocked) return gated.blocked;
+  const resp = gated.resp;
   if (resp.error) return resp.error;
-  const results = Array.isArray(resp.body.results) ? resp.body.results : [];
+  const body = stripAceMeta(resp.body);
+  const results = Array.isArray(body.results) ? body.results : [];
   const scanned = await Promise.all(
     results.map((r) => scanAndShape(r, token)),
   );
@@ -1793,6 +1965,7 @@ function runScan(text, opts = {}) {
 // Wraps a brief or full capsule from the registry, scans every string-bearing
 // field the agent will see, and decides what to return.
 async function scanAndShape(capsule, token, opts = {}) {
+  capsule = stripAceMeta(capsule);
   if (!capsule || typeof capsule !== "object") {
     return aceWarning("malformed capsule from registry", "format_mismatch");
   }
@@ -1842,8 +2015,8 @@ function trimTextForBrief(text) {
 }
 
 function shapeCapsuleForRetrieval(capsule, opts = {}) {
-  if (opts.full) return capsule;
-  const shaped = { ...capsule };
+  if (opts.full) return stripAceMeta(capsule);
+  const shaped = stripAceMeta(capsule);
   if (typeof shaped.body === "string") delete shaped.body;
   if (typeof shaped.full_body_md === "string") delete shaped.full_body_md;
   if (typeof shaped.brief_view === "string") {
@@ -2190,6 +2363,78 @@ if (process.argv.includes("--selftest")) {
     const fixedUpstreamFreshPreflight = preparePublicPublishPayload(fixedUpstreamFreshPayload);
     const fixedUpstreamFreshOk = !fixedUpstreamFreshPreflight.ok && fixedUpstreamFreshPreflight.blockers.some((b) => b.code === "freshness_fixed_upstream_requires_version_scope");
     console.log(`${fixedUpstreamFreshOk ? "PASS" : "FAIL"} public preflight rejects fixed-upstream strict freshness marked fresh`);
-    process.exit(passed === cases.length && toolTableOk && legacyWarningOk && rawAdminDispatchOk && adminReviewLocalGuardsOk && trimOk && stableOk && strictOk && multiOk && weakOk && strictChecksOk && dueStrictOk && fixedUpstreamFreshOk ? 0 : 1);
+    let markerOk = true;
+    // Hermetic unauthorized-path fixture: force the token read to ENOENT and
+    // forbid network so this selftest never fires a live search on a machine
+    // where a real ~/.ace/token exists.
+    const originalReadForUnauthorized = fs.readFileSync;
+    const originalFetchForUnauthorized = global.fetch;
+    let unauthorizedFetchCalled = false;
+    global.fetch = async () => { unauthorizedFetchCalled = true; throw new Error("unauthorized selftest fetch should not run"); };
+    fs.readFileSync = function unauthorizedRead(file, ...rest) {
+      if (String(file) === String(TOKEN_FILE)) {
+        const err = new Error(`ENOENT: no such file or directory, open '${file}'`);
+        err.code = "ENOENT";
+        throw err;
+      }
+      return originalReadForUnauthorized.call(this, file, ...rest);
+    };
+    const unauthorized = await callTool("ace_search", { query: "fixture" });
+    fs.readFileSync = originalReadForUnauthorized;
+    global.fetch = originalFetchForUnauthorized;
+    markerOk &&= !unauthorizedFetchCalled;
+    markerOk &&= /Authenticate with ACE/.test(unauthorized.ace_warning || "");
+    markerOk &&= unauthorized.ace_meta?.target_name === TARGET_NAME;
+    markerOk &&= unauthorized.ace_meta?.config_source === (EXPLICIT_REGISTRY_URL ? "explicit" : "default");
+    markerOk &&= /^rr-[0-9a-f]{32}$/.test(unauthorized.ace_meta?.retrieval_report_id || "");
+    markerOk &&= !/SENTINEL_|Bearer |\/\.ace\//.test(JSON.stringify(unauthorized));
+    retrievalCapabilitiesCache.status = "success";
+    retrievalCapabilitiesCache.cap = { target_kind: TARGET_KIND === "public" ? "team" : "public", environment: "<|im_start|>" + "x".repeat(500), visibility_label: "Public ACE<script>" };
+    const originalFetchForMarker = global.fetch;
+    const originalReadForMarker = fs.readFileSync;
+    let markerFetchCalled = false;
+    global.fetch = async () => { markerFetchCalled = true; throw new Error("marker selftest fetch should not run"); };
+    fs.readFileSync = function markerRead(file, ...rest) {
+      if (String(file) === String(TOKEN_FILE)) return "fixture-token";
+      return originalReadForMarker.call(this, file, ...rest);
+    };
+    const mismatch = await callTool("ace_search", { query: "fixture" });
+    const mismatchGet = ACE_ROLE === "admin" ? await callTool("ace_get", { id: "capsule-fixture" }) : null;
+    const mismatchRecent = ACE_ROLE === "admin" ? await callTool("ace_list_recent", {}) : null;
+    fs.readFileSync = originalReadForMarker;
+    global.fetch = originalFetchForMarker;
+    markerOk &&= !markerFetchCalled;
+    markerOk &&= mismatch.ace_meta?.target_check === "mismatch";
+    markerOk &&= typeof mismatch.ace_warning === "string" && !Object.prototype.hasOwnProperty.call(mismatch, "results");
+    if (ACE_ROLE === "admin") {
+      markerOk &&= mismatchGet.ace_meta?.target_check === "mismatch" && typeof mismatchGet.ace_warning === "string" && mismatchGet.body === undefined && mismatchGet.brief_view === undefined;
+      markerOk &&= mismatchRecent.ace_meta?.target_check === "mismatch" && typeof mismatchRecent.ace_warning === "string" && !Object.prototype.hasOwnProperty.call(mismatchRecent, "results");
+    }
+    markerOk &&= mismatch.ace_meta?.server_claim?.environment.length <= 64;
+    markerOk &&= !JSON.stringify(mismatch).includes("<|im_start|>");
+    retrievalCapabilitiesCache.status = "empty";
+    retrievalCapabilitiesCache.cap = undefined;
+    const stripped = stampAceMeta("ace_search", { ace_meta: { fake: true }, results: [{ id: "capsule-1", ace_meta: { fake: true }, brief_view: "## Claim\nok" }] });
+    markerOk &&= stripped.ace_meta?.fake === undefined && stripped.results[0].ace_meta === undefined;
+    markerOk &&= stampAceMeta("ace_report_reuse", { ok: true }).ace_meta.retrieval_report_id === undefined;
+    console.log(`${markerOk ? "PASS" : "FAIL"} ace_meta stamping mismatch short-circuit sanitization no-leak and strip`);
+    // Marker/doctor parity: name/kind/origin inference is duplicated between
+    // this file and doctor.cjs; spawn doctor's offline startup summary under
+    // the same env and compare, so the two paths cannot silently drift.
+    let doctorParityOk = false;
+    try {
+      const cpParity = require("child_process");
+      const doctorOut = cpParity.spawnSync(process.execPath, [path.join(__dirname, "doctor.cjs"), "--startup-summary"], { env: process.env, encoding: "utf8", timeout: 5000 });
+      const targetLine = String(doctorOut.stdout || "").split(/\n/).find((line) => line.startsWith("ACE target:")) || "";
+      const parity = targetLine.match(/^ACE target: (Team ACE|Public ACE) (\S+) \((\S+)\)$/);
+      doctorParityOk = !!parity
+        && parity[1] === (TARGET_KIND === "team" ? "Team ACE" : "Public ACE")
+        && parity[2] === TARGET_NAME
+        && new URL(parity[3]).origin === REGISTRY_ORIGIN;
+    } catch {
+      doctorParityOk = false;
+    }
+    console.log(`${doctorParityOk ? "PASS" : "FAIL"} marker/doctor target parity`);
+    process.exit(passed === cases.length && toolTableOk && legacyWarningOk && rawAdminDispatchOk && adminReviewLocalGuardsOk && trimOk && stableOk && strictOk && multiOk && weakOk && strictChecksOk && dueStrictOk && fixedUpstreamFreshOk && markerOk && doctorParityOk ? 0 : 1);
   })();
 }
