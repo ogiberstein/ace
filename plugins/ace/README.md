@@ -22,7 +22,7 @@ This directory is the **real** ACE plugin shipped to users. For the capability s
 
 The standing-instructions snippet is the **single source of truth** for the §6.3 CLAUDE.md snippet. Edit `snippets/claude-md-snippet.txt` to change agent behavior; the SessionStart hook reads it verbatim.
 
-`hooks/ace-stop-capture-nudge.sh` ships in this directory but is **intentionally not registered** in `hooks/hooks.json`: the Stop-hook capture nudge is specified in `docs/specs/2026-07-02-team-ace-auto-nudge-capture-reminder.md` (D48) and its registration is sequenced behind the reviewer-leg and A/B review/approval smokes. Do not wire it into `hooks.json` without explicit founder approval — hooks are a D25 load-bearing surface.
+`hooks/ace-stop-capture-nudge.sh` is registered as a bounded Stop hook with `timeout: 10`. It stays local and deterministic: it reads only the local transcript path from Claude Code's hook payload, uses line/tool-count proxies, emits one fixed nudge line on stderr, and exits 2 only when the transcript looks substantive and the same-session/cross-session cooldown gates allow it. Disable it per profile/session with `ACE_CAPTURE_NUDGE=0` (also accepts `false`, `no`, or `off`) or remove the Stop entry from `hooks/hooks.json`. Do not add stale-draft or admin-queue nudges without a separate founder gate — those are deferred Phase C/D.
 
 ## Tools
 
@@ -90,8 +90,12 @@ On scan failure:
 | `ACE_PUBLISH_KEY_FILE` | admin only: `~/.ace/publish_key` | Admin publish key path. Non-admin roles do not default to this path. |
 | `ACE_SUBMIT_MODE` / `ACE_ADMIN_MODE` | unset | Launcher compatibility flags; `ACE_ROLE` is authoritative. |
 | `ACE_EXPOSE_GET` | unset | Add `ace_get` to retrieval-only sessions when explicitly desired. |
+| `ACE_CAPTURE_NUDGE` | enabled | Stop-hook capture nudge kill switch. Values `0`, `false`, `no`, or `off` suppress the nudge. |
+| `ACE_CAPTURE_NUDGE_COOLDOWN_HOURS` | `4` | Cross-session capture-nudge cooldown per machine/profile state dir. `0` disables only the cooldown, not the same-session marker. |
 
-Do not put Team ACE target vars or key paths in `.zshrc`, `.bashrc`, direnv, LaunchAgents, or other global shell defaults. Launch one role profile per session instead.
+Do not put Team ACE target vars, key paths, or nudge toggles in `.zshrc`, `.bashrc`, direnv, LaunchAgents, or other global shell defaults. Launch one role profile per session instead.
+
+Rollback posture: disable the registered Stop hook by setting `ACE_CAPTURE_NUDGE=0` in the affected profile/session env, or remove the Stop-hook entry from `hooks/hooks.json` in a follow-up plugin sync.
 
 ## Switching profiles: Public ACE vs Team ACE; submitter vs admin
 
@@ -295,6 +299,12 @@ node scripts/mcp-server.cjs --selftest
 ```
 
 Runs the scan fixture suite plus role-gating and publish-preflight assertions without entering the stdio loop. Exit 0 = all pass.
+
+Capture nudge Phase A selftest (local only; does not register the Stop hook):
+
+```bash
+plugins/ace/scripts/capture-nudge-selftest.sh
+```
 
 ## Install (local marketplace, for development)
 

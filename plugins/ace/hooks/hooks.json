@@ -1,5 +1,5 @@
 {
-  "description": "ACE plugin hooks. SessionStart emits standing instructions per spec §6.3.",
+  "description": "ACE plugin hooks. SessionStart emits standing instructions per spec §6.3; Stop emits the bounded capture nudge.",
   "hooks": {
     "SessionStart": [
       {
@@ -9,6 +9,17 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/ace-session-start.sh",
             "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/ace-stop-capture-nudge.sh",
+            "timeout": 10
           }
         ]
       }
