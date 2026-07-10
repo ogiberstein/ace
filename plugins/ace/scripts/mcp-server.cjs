@@ -1571,7 +1571,7 @@ function addLocalPromoteReadinessBlockers(payload, assessment, freshness, blocke
 // ---------------------------------------------------------------------------
 // Draft parsing (mirrors cli/ace.cjs; the plugin must be self-contained).
 // ---------------------------------------------------------------------------
-const FRONT_RE = /^---\s*\r?\n([\s\S]*?)\r?\n---\s*\r?\n?/;
+const FRONT_RE = /^\uFEFF?---\s*\r?\n([\s\S]*?)\r?\n---\s*\r?\n?/;
 const DRAFT_ID_RE = /^capsule-\d{8}-[a-z0-9][a-z0-9-]{1,60}$/;
 const DRAFT_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -1601,7 +1601,7 @@ function parseYamlSubset(text) {
   for (const rawLine of lines) {
     // `#` opens a YAML comment only at line start or after whitespace; bare `#`
     // mid-token is data (e.g. GitHub anchors like owner/repo#123 in verified_against).
-    const withoutComment = rawLine.replace(/(^|\s)#.*$/, "$1");
+    const withoutComment = stripYamlComment(rawLine);
     if (!withoutComment.trim()) continue;
     const indent = withoutComment.match(/^\s*/)?.[0].length ?? 0;
     const trimmed = withoutComment.trim();
@@ -1624,6 +1624,32 @@ function parseYamlSubset(text) {
     }
   }
   return out;
+}
+
+function stripYamlComment(line) {
+  let inQuote = null;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuote) {
+      if (inQuote === "'" && ch === "'" && line[i + 1] === "'") {
+        i++;
+        continue;
+      }
+      if (ch === inQuote) {
+        let precedingBackslashes = 0;
+        for (let j = i - 1; j >= 0 && line[j] === "\\"; j--) precedingBackslashes++;
+        if (inQuote === "'" || precedingBackslashes % 2 === 0) inQuote = null;
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      const previousToken = line.slice(0, i).trimEnd().at(-1);
+      if ([":", "[", ","].includes(previousToken)) inQuote = ch;
+      continue;
+    }
+    if (ch === "#" && (i === 0 || /\s/.test(line[i - 1]))) return line.slice(0, i);
+  }
+  return line;
 }
 
 function parseYamlScalar(val) {
