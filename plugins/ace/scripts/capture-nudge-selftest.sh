@@ -98,6 +98,40 @@ expect_status_output 2 "$APPROVED_COPY" "$state_once" "$(payload_for "$substanti
 [ -e "$state_once/.capture-nudge-cooldown" ] || fail "cooldown marker not written"
 pass "substantive transcript nudges once and writes markers"
 
+default_tmp="$TMP/default-state-root"
+expected_default_state="$default_tmp/ace-capture-nudge-$(id -u)"
+mkdir -p "$default_tmp"
+out="$TMP/default-state.out"
+err="$TMP/default-state.err"
+set +e
+(
+  unset ACE_HOOK_STATE_DIR
+  TMPDIR="$default_tmp" ACE_CAPTURE_NUDGE= ACE_CAPTURE_NUDGE_COOLDOWN_HOURS=4 \
+    "$HOOK" >"$out" 2>"$err" <<<"$(payload_for "$substantive_b")"
+)
+status=$?
+set -e
+[ "$status" -eq 2 ] || fail "per-user state dir: expected status 2, got $status; stderr=$(cat "$err")"
+[ "$(cat "$err")" = "$APPROVED_COPY" ] || fail "per-user state dir: nudge copy changed"
+[ -e "$expected_default_state/$(basename "$substantive_b").nudged" ] || fail "per-user state marker missing at $expected_default_state"
+[ ! -e "$default_tmp/ace-capture-nudge/$(basename "$substantive_b").nudged" ] || fail "machine-global state marker was written"
+pass "state dir is per-user"
+
+state_unwritable="$TMP/state-unwritable"
+mkdir -p "$state_unwritable"
+ln -s "$state_unwritable/missing/marker-target" "$state_unwritable/$(basename "$substantive_c").nudged"
+out="$TMP/state-unwritable.out"
+err="$TMP/state-unwritable.err"
+set +e
+ACE_CAPTURE_NUDGE= ACE_CAPTURE_NUDGE_COOLDOWN_HOURS=0 ACE_HOOK_STATE_DIR="$state_unwritable" \
+  "$HOOK" >"$out" 2>"$err" <<<"$(payload_for "$substantive_c")"
+status=$?
+set -e
+[ "$status" -eq 0 ] || fail "unwritable state dir: expected fail-open status 0, got $status"
+[ ! -s "$out" ] || fail "unwritable state dir: stdout should be empty"
+[ ! -s "$err" ] || fail "unwritable state dir: write failure leaked to stderr: $(cat "$err")"
+pass "unwritable state dir fails open silently (no stderr)"
+
 expect_status_output 0 "" "$state_once" "$(payload_for "$substantive_a")" substantive-same-session
 pass "same-session marker suppresses repeat nudge"
 
@@ -107,6 +141,36 @@ expect_status_output 0 "" "$state_cooldown" "$(payload_for "$substantive_b")" co
 perl -e 'my $t = time - 5 * 3600; utime $t, $t, $ARGV[0] or die "utime failed: $!\n"' "$state_cooldown/.capture-nudge-cooldown"
 expect_status_output 2 "$APPROVED_COPY" "$state_cooldown" "$(payload_for "$substantive_c")" cooldown-expired
 pass "cross-session cooldown suppresses then re-arms after expiry"
+
+state_zero_padded="$TMP/state-zero-padded"
+mkdir -p "$state_zero_padded"
+: > "$state_zero_padded/.capture-nudge-cooldown"
+out="$TMP/zero-padded-cooldown.out"
+err="$TMP/zero-padded-cooldown.err"
+set +e
+ACE_CAPTURE_NUDGE= ACE_CAPTURE_NUDGE_COOLDOWN_HOURS=08 ACE_HOOK_STATE_DIR="$state_zero_padded" \
+  "$HOOK" >"$out" 2>"$err" <<<"$(payload_for "$substantive_b")"
+status=$?
+set -e
+[ "$status" -eq 0 ] || fail "zero-padded cooldown: expected status 0, got $status; stderr=$(cat "$err")"
+[ ! -s "$out" ] || fail "zero-padded cooldown: stdout should be empty"
+[ ! -s "$err" ] || fail "zero-padded cooldown: stderr should be empty"
+pass "zero-padded COOLDOWN_HOURS neither bypasses cooldown nor pollutes nudge stderr"
+
+state_oversized="$TMP/state-oversized"
+mkdir -p "$state_oversized"
+: > "$state_oversized/.capture-nudge-cooldown"
+out="$TMP/oversized-cooldown.out"
+err="$TMP/oversized-cooldown.err"
+set +e
+ACE_CAPTURE_NUDGE= ACE_CAPTURE_NUDGE_COOLDOWN_HOURS=999999999999999999999999999999 ACE_HOOK_STATE_DIR="$state_oversized" \
+  "$HOOK" >"$out" 2>"$err" <<<"$(payload_for "$substantive_c")"
+status=$?
+set -e
+[ "$status" -eq 0 ] || fail "oversized cooldown: expected status 0, got $status; stderr=$(cat "$err")"
+[ ! -s "$out" ] || fail "oversized cooldown: stdout should be empty"
+[ ! -s "$err" ] || fail "oversized cooldown: stderr should be empty"
+pass "oversized COOLDOWN_HOURS falls back without polluting hook stderr"
 
 for value in 0 false no off; do
   out="$TMP/disabled-$value.out"
@@ -120,6 +184,18 @@ for value in 0 false no off; do
   [ ! -s "$err" ] || fail "disabled $value: stderr should be empty"
 done
 pass "disable values 0|false|no|off suppress nudge"
+
+out="$TMP/disabled-whitespace.out"
+err="$TMP/disabled-whitespace.err"
+set +e
+ACE_CAPTURE_NUDGE=$' \tOff \n' ACE_HOOK_STATE_DIR="$TMP/state-disabled-whitespace" \
+  "$HOOK" >"$out" 2>"$err" <<<"$(payload_for "$substantive_a")"
+status=$?
+set -e
+[ "$status" -eq 0 ] || fail "whitespace-padded disable: expected status 0, got $status"
+[ ! -s "$out" ] || fail "whitespace-padded disable: stdout should be empty"
+[ ! -s "$err" ] || fail "whitespace-padded disable: stderr should be empty"
+pass "whitespace-padded disable value suppresses the nudge"
 
 expect_status_output 0 "" "$TMP/state-stop-active" '{"transcript_path":"/tmp/ignored","stop_hook_active":true}' stop-hook-active
 expect_status_output 0 "" "$TMP/state-malformed" '{not-json' malformed-payload

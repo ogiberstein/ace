@@ -10,7 +10,7 @@ One-step admin publish of a capsule draft to the active ACE target. The target d
 - **Public ACE** target: `public` means globally public.
 - **Team ACE** target: use **team-shared** for user-facing copy; internal APIs may still call this `public` visibility inside that isolated instance.
 
-This command is available only in an intentional `ACE_ROLE=admin` profile. Retrieval and submitter profiles must not expose `ace_publish`, `ace_promote`, or `ace_publish_status`.
+This command is available only in an intentional `ACE_ROLE=admin` profile. Retrieval and submitter profiles must not expose `ace_publish`, `ace_promote`, or `ace_publish_status`. **If these tools are absent, you are on the wrong profile — do not improvise terminal steps. Run `/ace:doctor`; it names the admin-tools-absent mismatch and prints the exact copy/paste relaunch command for this target. Exit and relaunch as admin, then retry.**
 
 ## Usage
 

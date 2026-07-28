@@ -12,7 +12,7 @@ Submit a **scrubbed** local ACE draft to the active ACE review queue. This never
 1. Run the submit preflight first:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT:-plugins/ace}/scripts/doctor.cjs" --submit-preflight
+node "${CLAUDE_SKILL_DIR}/../../scripts/doctor.cjs" --submit-preflight
 ```
 
 2. Stop if doctor reports:

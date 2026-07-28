@@ -6,7 +6,11 @@
 set -euo pipefail
 
 is_disabled() {
-  case "$(printf '%s' "${ACE_CAPTURE_NUDGE:-}" | tr '[:upper:]' '[:lower:]')" in
+  local value
+  value="$(printf '%s' "${ACE_CAPTURE_NUDGE:-}" | tr '[:upper:]' '[:lower:]')"
+  while [[ "$value" == [[:space:]]* ]]; do value="${value#?}"; done
+  while [[ "$value" == *[[:space:]] ]]; do value="${value%?}"; done
+  case "$value" in
     0|false|no|off) return 0 ;;
     *) return 1 ;;
   esac
@@ -23,7 +27,7 @@ stop_active="$(python3 -c 'import json,sys; p=json.load(sys.stdin); print(str(p.
 
 session_id="$(basename "$transcript_path" | tr -cd 'A-Za-z0-9._-' | cut -c1-80)"
 [ -z "$session_id" ] && exit 0
-marker_dir="${ACE_HOOK_STATE_DIR:-${TMPDIR:-/tmp}/ace-capture-nudge}"
+marker_dir="${ACE_HOOK_STATE_DIR:-${TMPDIR:-/tmp}/ace-capture-nudge-${UID:-$(id -u)}}"
 mkdir -p "$marker_dir" 2>/dev/null || exit 0
 marker="$marker_dir/${session_id}.nudged"
 cooldown_marker="$marker_dir/.capture-nudge-cooldown"
@@ -32,6 +36,12 @@ cooldown_marker="$marker_dir/.capture-nudge-cooldown"
 cooldown_hours="${ACE_CAPTURE_NUDGE_COOLDOWN_HOURS:-4}"
 case "$cooldown_hours" in
   ''|*[!0-9]*) cooldown_hours=4 ;;
+  *)
+    while [ "${#cooldown_hours}" -gt 1 ] && [ "${cooldown_hours#0}" != "$cooldown_hours" ]; do
+      cooldown_hours="${cooldown_hours#0}"
+    done
+    [ "${#cooldown_hours}" -le 6 ] || cooldown_hours=4
+    ;;
 esac
 
 if [ "$cooldown_hours" -gt 0 ] && [ -e "$cooldown_marker" ]; then
@@ -52,8 +62,8 @@ case "$line_count" in ''|*[!0-9]*) line_count=0;; esac
 case "$tool_count" in ''|*[!0-9]*) tool_count=0;; esac
 
 if [ "$line_count" -ge "20" ] && [ "$tool_count" -ge "3" ]; then
-  : > "$marker" 2>/dev/null || exit 0
-  : > "$cooldown_marker" 2>/dev/null || exit 0
+  { : > "$marker"; } 2>/dev/null || exit 0
+  { : > "$cooldown_marker"; } 2>/dev/null || exit 0
   echo "This session looks capsule-worthy. If it solved a reusable gotcha, draft it with /ace:capture --quick — nothing is submitted or published without your approval." >&2
   exit 2
 fi

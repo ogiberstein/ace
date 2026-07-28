@@ -11,7 +11,7 @@ Authenticate the local machine with the ACE registry. Required once per machine 
 This slash-command skill is the Claude Code flow. For generic MCP hosts such as Hermes, use the equivalent host-neutral helper instead:
 
 ```bash
-node plugins/ace/scripts/login.cjs
+node "${CLAUDE_SKILL_DIR}/../../scripts/login.cjs"
 ```
 
 It uses the same `$ACE_REGISTRY_URL` and `$ACE_TOKEN_FILE` contract and must never print the returned token.
@@ -44,10 +44,8 @@ It uses the same `$ACE_REGISTRY_URL` and `$ACE_TOKEN_FILE` contract and must nev
 
 ## After
 
-Run `ace_search` from any session to verify. If it returns `ace_warning: "Run /ace:login to authenticate"`, the token wasn't written correctly — re-run `/ace:login` inside Claude Code (or `node plugins/ace/scripts/login.cjs` in a generic MCP host).
+Run `ace_search` from any session to verify. If it returns `ace_warning: "Run /ace:login to authenticate"`, the token wasn't written correctly — re-run `/ace:login` inside Claude Code (or `node "${CLAUDE_SKILL_DIR}/../../scripts/login.cjs"` in a generic MCP host).
 
 ## Privacy notice
 
-This command issues a Bearer token tied to your GitHub `read:user` identity. The registry retains your GitHub login + per-key search history and reuse receipts for 90 days. To revoke/delete token-scoped data: `curl -X DELETE -H "Authorization: Bearer $(cat ~/.ace/token)" $ACE_REGISTRY_URL/v1/me` and then delete `~/.ace/token`.
-
-See spec §14.4 for the full data policy.
+To delete token-scoped server data, call `DELETE /v1/me` with your Bearer token, then remove the local token file (default `~/.ace/token`). This command issues that Bearer token against your GitHub `read:user` identity; the registry retains your GitHub login, per-key search history, and reuse receipts for 90 days. ACE does not request repository or organization access.

@@ -92,6 +92,13 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function requireSingleLineCredential(value) {
+  if (typeof value !== "string" || !/^[\x21-\x7e]+$/.test(value)) {
+    die("credential file is not a single-line token; refusing to send");
+  }
+  return value;
+}
+
 async function fetchJson(url, init = {}) {
   let resp;
   try {
@@ -125,8 +132,20 @@ function modeString(filePath) {
   return `0${(st.mode & 0o777).toString(8)}`;
 }
 
-function writeToken(filePath, token) {
+function tokenMetadataFile(filePath) {
+  return `${filePath}.meta.json`;
+}
+
+function writePrivateFileAtomic(filePath, contents) {
+  const tmp = `${filePath}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, contents, { mode: 0o600 });
+  fs.renameSync(tmp, filePath);
+  fs.chmodSync(filePath, 0o600);
+}
+
+function writeToken(filePath, token, registryUrl) {
   if (!token || typeof token !== "string") die("registry did not return a token");
+  const origin = new URL(registryUrl).origin;
   const dir = path.dirname(filePath);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   try {
@@ -134,16 +153,15 @@ function writeToken(filePath, token) {
   } catch {
     // Best-effort: existing parent may not be owned by the current user.
   }
-  const tmp = `${filePath}.tmp-${process.pid}`;
-  fs.writeFileSync(tmp, `${token}\n`, { mode: 0o600 });
-  fs.renameSync(tmp, filePath);
-  fs.chmodSync(filePath, 0o600);
+  writePrivateFileAtomic(filePath, `${token}\n`);
+  writePrivateFileAtomic(tokenMetadataFile(filePath), `${JSON.stringify({ origin })}\n`);
 }
 
 async function checkExisting(opts) {
   if (!fs.existsSync(opts.tokenFile)) die(`token file does not exist: ${opts.tokenFile}`);
   const token = fs.readFileSync(opts.tokenFile, "utf8").trim();
   if (!token) die(`token file is empty: ${opts.tokenFile}`);
+  requireSingleLineCredential(token);
   const { resp, body } = await fetchJson(`${opts.registry}/v1/me`, {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
   });
@@ -209,7 +227,7 @@ async function login(opts) {
       die(`device-flow claim failed: HTTP ${resp.status} ${body.ace_error || body.error || ""}`.trim());
     }
 
-    writeToken(opts.tokenFile, body.token);
+    writeToken(opts.tokenFile, body.token, opts.registry);
     console.log("\nACE login complete.");
     console.log(`logged in as: ${body.github_login || "unknown-user"}`);
     console.log(`wrote token file: ${opts.tokenFile} (${modeString(opts.tokenFile)})`);
@@ -222,6 +240,28 @@ async function login(opts) {
 }
 
 async function main() {
+  if (process.argv.includes("--selftest")) {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ace-login-credential-"));
+    const tokenPath = path.join(tmpDir, "token");
+    fs.writeFileSync(tokenPath, "SENTINEL_ONE\nSENTINEL_TWO\n", { mode: 0o600 });
+    try {
+      const child = spawnSync(process.execPath, [__filename, "--check", "--registry", "http://127.0.0.1:1", "--token-file", tokenPath], { encoding: "utf8" });
+      const output = `${child.stdout || ""}${child.stderr || ""}`;
+      if (child.status !== 1 || output.includes("SENTINEL") || !output.includes("credential file is not a single-line token; refusing to send")) {
+        throw new Error("malformed credential selftest failed");
+      }
+      console.log("PASS login malformed credential fails before headers without value disclosure");
+      writeToken(tokenPath, "fixture-valid-token", "https://team.example.test/path");
+      const metadata = JSON.parse(fs.readFileSync(tokenMetadataFile(tokenPath), "utf8"));
+      if (metadata.origin !== "https://team.example.test" || modeString(tokenMetadataFile(tokenPath)) !== "0600") {
+        throw new Error("token origin metadata selftest failed");
+      }
+      console.log("PASS login writes mode-0600 token origin metadata sidecar");
+      return;
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }
   const opts = parseArgs(process.argv.slice(2));
   if (opts.check) await checkExisting(opts);
   else await login(opts);

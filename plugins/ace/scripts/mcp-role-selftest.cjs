@@ -94,10 +94,11 @@ async function withServer(handler, options = {}) {
       }
     });
   });
-  await new Promise((resolve) => srv.listen(0, "127.0.0.1", resolve));
+  await new Promise((resolve) => srv.listen(0, options.listenHost || "127.0.0.1", resolve));
   try {
     const port = srv.address().port;
-    return await handler(`http://127.0.0.1:${port}`, requests);
+    const urlHost = options.urlHost || "127.0.0.1";
+    return await handler(`http://${urlHost}:${port}`, requests);
   } finally {
     await new Promise((resolve) => srv.close(resolve));
   }
@@ -127,6 +128,27 @@ function retrievalRoutes() {
     if (req.method === "POST" && /^\/v1\/capsules\/capsule-fixture\/reuse$/.test(req.url)) {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: true, ace_meta: { spoof: true } }));
+      return true;
+    }
+    return false;
+  };
+}
+
+function publishRoutes() {
+  return (req, res) => {
+    if (req.method === "POST" && req.url === "/v1/capsules") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+      return true;
+    }
+    if (req.method === "POST" && /^\/v1\/capsules\/[^/]+\/promote$/.test(req.url)) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+      return true;
+    }
+    if (req.method === "GET" && /^\/v1\/capsules\/[^/]+\/publish-status$/.test(req.url)) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok_to_promote: true, visibility: "public" }));
       return true;
     }
     return false;
@@ -272,12 +294,28 @@ async function main() {
     assert.ok(Array.isArray(result.results), "loopback target_kind mismatch should not fail closed");
   }, { capabilities: { ...TEAM_CAPABILITIES, target_kind: "public", visibility_label: "Public ACE" }, routes: retrievalRoutes() });
 
+  // SEC-C-13: non-loopback mismatch sends zero Bearer requests and still warns.
+  await withServer(async (url, requests) => {
+    const result = await callTool({ ACE_ROLE: "retrieval", ACE_REGISTRY_URL: url, ACE_TARGET_KIND: "team", ACE_TOKEN_FILE: tokenFile }, "ace_search", { query: "fixture" });
+    assert.match(result.ace_warning || "", /target mismatch/);
+    assert.equal(result.ace_meta.target_check, "mismatch");
+    const bearerRequests = requests.filter((r) => /^Bearer /i.test(r.auth || ""));
+    assert.deepEqual(bearerRequests, [], `zero-Bearer inbound-log evidence: ${JSON.stringify(requests)}`);
+    assert.deepEqual(requests.map((r) => `${r.method} ${r.url} auth=${r.auth || "(none)"}`), ["GET /v1/capabilities auth=(none)"]);
+  }, {
+    capabilities: { ...TEAM_CAPABILITIES, target_kind: "public", visibility_label: "Public ACE" },
+    routes: retrievalRoutes(),
+    listenHost: "0.0.0.0",
+    urlHost: "127.0.0.2",
+  });
+
   await withServer(async (url, requests) => {
     const result = await callTool({ ACE_ROLE: "retrieval", ACE_REGISTRY_URL: url, ACE_TARGET_KIND: "team", ACE_TOKEN_FILE: tokenFile }, "ace_search", { query: "fixture" });
     assert.equal(result.ace_meta.target_check, "unverified");
     assert.equal(result.ace_meta.server_claim, null);
-    assert.ok(Array.isArray(result.results), "unverified capabilities should fail open");
+    assert.ok(Array.isArray(result.results), "unverified capabilities should preserve current result-returning behavior");
     assert.deepEqual(requests.map((r) => `${r.method} ${r.url}`).sort(), ["GET /v1/capabilities", "GET /v1/capsules?q=fixture&limit=3"].sort());
+    assert.equal(requests.find((r) => r.url.startsWith("/v1/capsules?")).auth, "Bearer fake-token", "unverified probe must preserve current authenticated retrieval behavior");
   }, { capabilities: undefined, routes: retrievalRoutes() });
 
   await withServer(async (url, requests) => {
@@ -319,6 +357,20 @@ async function main() {
     assert.deepEqual(requests.map((r) => `${r.method} ${r.url}`), ["GET /v1/capabilities", "POST /v1/submissions"]);
   }, { capabilities: { submissions_open: true, search_gate_mode: "off", freshness_crons_configured: false } });
 
+  // ace_submit fails closed on target-kind mismatch (no POST)
+  await withServer(async (url, requests) => {
+    const result = await callTool({
+      ACE_ROLE: "submitter",
+      ACE_REGISTRY_URL: url,
+      ACE_TARGET_KIND: "team",
+      ACE_TOKEN_FILE: tokenFile,
+      ACE_TEST_CAPABILITIES_FIXTURE: "1",
+      ACE_CAPABILITIES_JSON: JSON.stringify({ ...TEAM_CAPABILITIES, target_kind: "public" }),
+    }, "ace_submit", { draft_path: draft, team_attestation: true });
+    assert.match(result.ace_error || "", /target mismatch/);
+    assert.equal(requests.some((r) => r.method === "POST"), false, "target mismatch must perform no POST");
+  }, { capabilities: TEAM_CAPABILITIES });
+
   const adminKeyFile = path.join(tmp, "admin-decision-key");
   fs.writeFileSync(adminKeyFile, "fake-admin-decision-key");
   const adminEnv = (url, extra = {}) => ({
@@ -329,6 +381,28 @@ async function main() {
     ACE_TARGET_KIND: "team",
     ...extra,
   });
+
+  // ace_publish fails closed on target mismatch and never mislabels visibility
+  await withServer(async (url, requests) => {
+    const mismatchEnv = adminEnv(url, {
+      ACE_TEST_CAPABILITIES_FIXTURE: "1",
+      ACE_CAPABILITIES_JSON: JSON.stringify({ ...TEAM_CAPABILITIES, target_kind: "public" }),
+    });
+    for (const [tool, args] of [
+      ["ace_publish", { draft_path: draft }],
+      ["ace_promote", { id: "capsule-20260629-test" }],
+      ["ace_publish_status", { id: "capsule-20260629-test" }],
+    ]) {
+      const result = await callTool(mismatchEnv, tool, args);
+      assert.match(result.ace_error || "", /target mismatch/, `${tool} must reject target mismatch`);
+    }
+    assert.equal(requests.length, 0, "target mismatch must stop all authenticated publish-plane requests");
+
+    const promoted = await callTool(adminEnv(url), "ace_promote", { id: "capsule-20260629-test" });
+    assert.equal(promoted.visibility, "team-shared", "promote visibility must reflect registry target_kind=team");
+    const status = await callTool(adminEnv(url), "ace_publish_status", { id: "capsule-20260629-test" });
+    assert.equal(status.visibility, "team-shared", "publish-status visibility must reflect registry target_kind=team");
+  }, { capabilities: TEAM_CAPABILITIES, routes: publishRoutes() });
 
   // Approve happy path: capabilities target check -> artifact refetch -> decision
   // POST with the admin decision key as bearer; visibility rendered team-shared.

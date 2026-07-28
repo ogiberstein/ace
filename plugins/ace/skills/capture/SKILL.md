@@ -51,7 +51,7 @@ Do not hand-author a full `freshness_assessment` unless you know the registry sc
 
 Body sections in order, with no extra `##` headings: **Claim**, **You're working on**, **Don't waste time on**, **First move if you proceed**, **Verify in your context**, **Receipt**, **When this stops applying**, **Reuse evidence** (empty initially).
 
-Target: brief view (first five sections) fits in ~500-800 tokens.
+Target: brief view (first five sections) fits in ~500-800 tokens. The text under `## Claim` has a hard limit of **500 characters**. While drafting, run `node cli/ace.cjs lint <resolved-path>` from an ACE repo checkout; `ace lint` reports the current claim count and rejects an overflow before publish preflight. Do not duplicate or guess the limit in another validator—the CLI is the source of truth.
 
 ### 3. Run the portabilization audit (spec §5.2)
 
@@ -93,6 +93,8 @@ Resolve the drafts directory in this order, using the first that is writable:
 Claude Code's Bash sandbox confines writes to the session's workspace and denies writes to `$HOME` paths outside it with `EPERM` ("Operation not permitted"). Since `/ace:capture` is typically run from a project *other* than the ACE repo, writing to `~/.ace/drafts/` will frequently fail. Handle it: attempt the `mkdir`/write at the chosen path; if it errors with `EPERM` or `EACCES`, fall back to the next option. When falling back to `./.ace-drafts/`, also write a `.gitignore` containing `*` inside it so drafts never get committed to the host project's repo.
 
 Write the draft to `<resolved-dir>/<id>.md`.
+
+Before presenting the draft as ready, run `node cli/ace.cjs lint <resolved-path>` when the CLI is available. If the claim exceeds 500 characters, report the exact current count from lint and shorten it before continuing. If the marketplace-only install does not include the repo CLI, state that lint is pending rather than implying publish readiness; the admin publish dry-run will still enforce the same limit.
 
 Confirm to the founder, substituting the actual resolved path:
 

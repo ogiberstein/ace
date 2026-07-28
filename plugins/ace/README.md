@@ -24,6 +24,8 @@ The standing-instructions snippet is the **single source of truth** for the §6.
 
 `hooks/ace-stop-capture-nudge.sh` is registered as a bounded Stop hook with `timeout: 10`. It stays local and deterministic: it reads only the local transcript path from Claude Code's hook payload, uses line/tool-count proxies, emits one fixed nudge line on stderr, and exits 2 only when the transcript looks substantive and the same-session/cross-session cooldown gates allow it. Disable it per profile/session with `ACE_CAPTURE_NUDGE=0` (also accepts `false`, `no`, or `off`) or remove the Stop entry from `hooks/hooks.json`. Do not add stale-draft or admin-queue nudges without a separate founder gate — those are deferred Phase C/D.
 
+**Headless / CI:** disable the nudge for every print-mode invocation, for example `ACE_CAPTURE_NUDGE=0 claude -p "..."`. When the default-on Stop hook exits 2 in `claude -p`, Claude's post-hook continuation can replace the task answer in stdout; that makes the default posture unsafe for scripted stdout consumers even though interactive sessions render both messages.
+
 ## Tools
 
 Tool exposure is role-based:
@@ -38,7 +40,7 @@ Tool exposure is role-based:
 
 ### Submission review/decision (admin)
 
-The `ace_review_*` / `ace_submission_*` tools are the customer-mode path for moving a submitted `sub-*` capsule through review into published visibility (Team ACE renders this as **team-shared**; internal APIs still say `public`). Workflow: `/ace:review-queue` (see `skills/review-queue/SKILL.md`). Invariants: they authenticate with the admin decision key (`ACE_PUBLISH_KEY_FILE`), never the consumer token or a reviewer token; approval requires `submission_id` + current `verdict_version` + `reviewed_candidate_sha256` from a prior `ace_review_get` and refetches the artifact to fail closed on any drift; Public ACE still requires strict LLM-reviewed `reviewed_recommend`, while Team ACE friend-v1 permits admin-as-reviewer approval of pending submissions only when deterministic gates pass, team attestation is present, and `confirm_team_shared=true`; artifact text is shown only as bounded scanner-gated previews and full bodies are never emitted; a local-intent vs registry `target_kind` mismatch fails closed before any decision write. Queue counts are `*_listed_count` with `count_exact=false` (the registry lists at most 100 rows per status). CLI parity for review/decision commands is deferred: the MCP tools + `/ace:review-queue` are the supported customer-mode path; raw founder HTTP remains a developer fallback only.
+The `ace_review_*` / `ace_submission_*` tools are the customer-mode path for moving a submitted `sub-*` capsule through review into published visibility (Team ACE renders this as **team-shared**; internal APIs still say `public`). Workflow: `/ace:review-queue` (see `skills/review-queue/SKILL.md`). Invariants: they authenticate with the admin decision key (`ACE_PUBLISH_KEY_FILE`), never the consumer token or a reviewer token; approval requires `submission_id` + current `verdict_version` + `reviewed_candidate_sha256` from a prior `ace_review_get` and refetches the artifact to fail closed on any drift; Public ACE still requires strict LLM-reviewed `reviewed_recommend`, while an isolated Team ACE instance permits admin-as-reviewer approval of pending submissions only when deterministic gates pass, team attestation is present, and `confirm_team_shared=true`; artifact text is shown only as bounded scanner-gated previews and full bodies are never emitted; a local-intent vs registry `target_kind` mismatch fails closed before any decision write. Queue counts are `*_listed_count` with `count_exact=false` (the registry lists at most 100 rows per status). CLI parity for review/decision commands is deferred: the MCP tools + `/ace:review-queue` are the supported customer-mode path; raw founder HTTP remains a developer fallback only.
 
 Retrieval tools (`ace_search`, `ace_get`, `ace_list_recent`, `ace_report_reuse`) also stamp a top-level `ace_meta` marker generated locally by the MCP server. Submit/review/publish/admin responses do **not** carry `ace_meta`.
 
@@ -166,7 +168,7 @@ If `/ace:doctor` reports Public ACE when you expected Team ACE, or admin when yo
 
 ## Joining a Team ACE instance
 
-Friend-v1 Team ACE join is a **private join packet + `/ace:doctor` proof**, not shared-table membership or invite-code infrastructure. The happy path is Claude Code launched through `plugins/ace/scripts/profile-launcher.cjs`; it sets `ACE_PROFILE_LAUNCHED=1` so `/ace:doctor` can distinguish an intentional profile from leaked global shell env.
+Joining an isolated Team ACE instance uses a **private join packet + `/ace:doctor` proof**, not shared-table membership or invite-code infrastructure. The happy path is Claude Code launched through `plugins/ace/scripts/profile-launcher.cjs`; it sets `ACE_PROFILE_LAUNCHED=1` so `/ace:doctor` can distinguish an intentional profile from leaked global shell env.
 
 A join packet must include placeholders and paths, never token/key contents:
 
@@ -335,4 +337,4 @@ The script runs `codex mcp add` for you and points at the live registry by defau
 
 ## Privacy
 
-ACE stores GitHub login + per-key search history (90-day retention) + reuse receipts. Scope: `read:user`. To delete: `DELETE /v1/me` with your Bearer token, then `rm ~/.ace/token`. Full policy: spec §14.4.
+ACE stores GitHub login + per-key search history (90-day retention) + reuse receipts. GitHub scope: `read:user`; ACE does not request repository or organization access. To delete token-scoped server data, call `DELETE /v1/me` with your Bearer token, then remove the local token file (default `rm ~/.ace/token`).
