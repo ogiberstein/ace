@@ -32,6 +32,14 @@ It uses the same `$ACE_REGISTRY_URL` and `$ACE_TOKEN_FILE` contract and must nev
 
    **Security requirement:** do not print, echo, summarize, or show the returned `token` value in chat, terminal output, command previews, or approval prompts. The token is a Bearer credential.
 5. Write the returned token to the **resolved token file** from step 1 (`$ACE_TOKEN_FILE`, default `~/.ace/token`) with mode `0600`. Create its parent directory if it does not exist (mode `0700`). Prefer a script that parses the JSON and writes the token without echoing it, and only prints a redacted confirmation such as `wrote <token-file> (0600)`. Do not assume `~/.ace/token`: when `$ACE_TOKEN_FILE` points elsewhere (e.g. a sandbox token), writing to `~/.ace/token` would both fail the MCP server's read and clobber the production token.
+
+   Alongside the token, write the origin sidecar `<token-file>.meta.json` with mode `0600`, containing exactly one line of JSON with the registry **URL origin** (scheme+host, no path):
+
+   ```json
+   { "origin": "https://<registry-host>" }
+   ```
+
+   `/ace:doctor` reads this sidecar to warn when a token issued for one registry is later pointed at another (SEC-C-2 origin binding). `login.cjs writeToken` produces the same sidecar automatically; a login that skips it leaves the token silently unprotected by that check.
 6. Confirm to the user: "Logged in as `<github_login>`. ACE is ready." Do not include the token.
 
 ## Failure modes
