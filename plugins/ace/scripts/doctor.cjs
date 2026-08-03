@@ -240,13 +240,16 @@ function diagnose(env = process.env, opts = {}) {
   else if (!exists(token)) next = "Run /ace:login in this profile";
   return { role, registryUrl, explicitRegistryUrl, targetName, kind, token, pub, tokenUsesBuiltInDefault, publishKeyUsesBuiltInDefault, cap, capValid, caps, warnings, intake, next, tools: expected, actualTools };
 }
-// UX-16a: build the exact profile-launcher one-liner that relaunches THIS
-// target under a given role, so a wrong-profile session recovers by copy/paste
-// instead of terminal archeology.
+// UX-16a/D71: derive Team ACE admin breadcrumbs from the canonical mapping:
+// target ace-<slug> -> ~/.ace/<slug>/admin/* and ~/ace-admin-<slug>/.
+function targetSlug(targetName) {
+  return targetName.startsWith("ace-") ? targetName.slice(4) : targetName;
+}
 function relaunchCommand(targetRole, d) {
   const launcher = path.join(__dirname, "profile-launcher.cjs");
-  const targetRoot = d.kind === "team" ? path.join(os.homedir(), ".ace", d.targetName) : path.join(os.homedir(), ".ace");
-  const targetToken = targetRole === "admin" && d.kind === "team" ? path.join(targetRoot, "claude-code-a", "token") : path.join(targetRoot, "token");
+  const slug = targetSlug(d.targetName);
+  const targetRoot = d.kind === "team" ? path.join(os.homedir(), ".ace", slug) : path.join(os.homedir(), ".ace");
+  const targetToken = targetRole === "admin" && d.kind === "team" ? path.join(targetRoot, "admin", "token") : path.join(targetRoot, "token");
   const shellQuote = (value) => `'${String(value).replace(/'/g, `'"'"'`)}'`;
   const parts = ["node", launcher, "--target", d.targetName, "--kind", d.kind, "--url", d.registryUrl, "--role", targetRole, "--token-file", targetToken];
   if (targetRole === "admin") {
@@ -274,8 +277,14 @@ function render(mode, env = process.env) {
     lines.push(`Global env drift: ${d.warnings.filter((w) => /global\/default/.test(w)).join("; ") || "none"}`);
     if (d.role !== "admin") {
       lines.push(`Admin tools: not exposed in this ${d.role} profile — /ace:review-queue and other admin commands are wrong-profile here.`);
-      lines.push(`To run admin commands on this target, exit and relaunch as admin:`);
-      lines.push(`  ${relaunchCommand("admin", d)}`);
+      if (d.kind === "team") {
+        const slug = targetSlug(d.targetName);
+        lines.push(`Primary recovery: open Claude in your admin folder: cd ~/ace-admin-${slug} && claude`);
+        lines.push(`Fallback recovery: ${relaunchCommand("admin", d)}`);
+      } else {
+        lines.push(`To run admin commands on this target, exit and relaunch as admin:`);
+        lines.push(`  ${relaunchCommand("admin", d)}`);
+      }
     }
   }
   for (const w of d.warnings) lines.push(`WARN: ${w}`);
@@ -567,11 +576,13 @@ function selftest() {
     // so a failed admin command recovers with a one-liner instead of archeology.
     out = render("full", { ACE_ROLE: "retrieval", ACE_PROFILE_LAUNCHED: "1", ACE_TARGET_NAME: "ace-oleg-team0", ACE_TARGET_KIND: "team", ACE_REGISTRY_URL: "https://ace-oleg-team0.example.test", ACE_TOKEN_FILE: "/tmp/public-token" });
     assert.match(out, /Admin tools: not exposed/);
-    assert.match(out, /profile-launcher\.cjs'.*'--role' 'admin'/);
+    assert.match(out, /Primary recovery: open Claude in your admin folder: cd ~\/ace-admin-oleg-team0 && claude/);
+    assert.match(out, /Fallback recovery: .*profile-launcher\.cjs'.*'--role' 'admin'/);
     assert.match(out, /'--url' 'https:\/\/ace-oleg-team0\.example\.test'/);
     assert.match(out, /--publish-key-file/);
-    assert.match(out, /\.ace\/ace-oleg-team0\/claude-code-a\/token/);
-    assert.match(out, /\.ace\/ace-oleg-team0\/admin\/import_delete_key/);
+    assert.match(out, /\.ace\/oleg-team0\/admin\/token/);
+    assert.match(out, /\.ace\/oleg-team0\/admin\/import_delete_key/);
+    assert.doesNotMatch(out, /\.ace\/ace-oleg-team0\//);
     assert.doesNotMatch(out, /--token-file \/tmp\/public-token/);
     // An admin profile does not print the wrong-profile relaunch breadcrumb.
     out = render("full", { ACE_ROLE: "admin", ACE_PROFILE_LAUNCHED: "1", ACE_TARGET_NAME: "ace-oleg-team0", ACE_TARGET_KIND: "team", ACE_REGISTRY_URL: "https://ace-oleg-team0.example.test", ACE_TOKEN_FILE: "/tmp/tok", ACE_PUBLISH_KEY_FILE: "/tmp/key" });
