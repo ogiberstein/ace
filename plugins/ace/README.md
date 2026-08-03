@@ -166,9 +166,21 @@ Run `/ace:doctor` as the first command in every launched session. Expected postu
 If `/ace:doctor` reports Public ACE when you expected Team ACE, or admin when you expected submitter, stop and relaunch with the correct profile. Profiles are clients, not corpus planes: Public ACE is the global corpus; Team ACE is an isolated instance where `public` rows mean team-shared only inside that instance.
 
 
+## Where ACE points — the one rule
+
+> **ACE's target is decided per session, by the folder you launch Claude from.** A `.claude/settings.json` in the project folder (or a parent) sets the target and role for every session started there. No settings file → the session uses the built-in default: **Public ACE, retrieval-only**.
+>
+> | You launch `claude` in… | You get |
+> |---|---|
+> | a project with your **team settings file** | your Team ACE instance, submit + search |
+> | your **admin folder** (`~/ace-admin-<slug>/`) | your Team ACE instance, admin powers |
+> | anywhere else | Public ACE, read-only search (deliberate fallback, not a bug) |
+>
+> Being a team member gives you the *right* to access your instance; a folder's settings decide whether a given session actually points there. So: **drop your team settings file into every project where you do team work** (one copy each — your operator sends the filled file). Not sure where a session points? `/ace:doctor` always says — read its first line before submitting anything.
+
 ## Joining a Team ACE instance
 
-Joining an isolated Team ACE instance uses a **private join packet + `/ace:doctor` proof**, not shared-table membership or invite-code infrastructure. The happy path is Claude Code launched through `plugins/ace/scripts/profile-launcher.cjs`; it sets `ACE_PROFILE_LAUNCHED=1` so `/ace:doctor` can distinguish an intentional profile from leaked global shell env.
+Joining an isolated Team ACE instance uses a **private join packet + `/ace:doctor` proof**, not shared-table membership or invite-code infrastructure. The happy path is the **config-drop**: your operator sends a filled `.claude/settings.json`; you place it in a project folder and launch plain `claude` there (see the join packet for the exact steps). The settings set `ACE_PROFILE_LAUNCHED=1` so `/ace:doctor` can distinguish an intentional profile from leaked global shell env. `plugins/ace/scripts/profile-launcher.cjs` remains an advanced/per-session alternative that sets the same environment.
 
 A join packet must include placeholders and paths, never token/key contents:
 
