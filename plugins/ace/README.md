@@ -166,6 +166,8 @@ Run `/ace:doctor` as the first command in every launched session. Expected postu
 If `/ace:doctor` reports Public ACE when you expected Team ACE, or admin when you expected submitter, stop and relaunch with the correct profile. Profiles are clients, not corpus planes: Public ACE is the global corpus; Team ACE is an isolated instance where `public` rows mean team-shared only inside that instance.
 
 
+*Want to join your team's ACE?* Ask your team admin to invite you (`/ace:invite <your-github-login>` on their side) — you'll receive a small settings file and five paste-able steps. There is nothing to configure on your own.
+
 ## Where ACE points — the one rule
 
 > **ACE's target is decided per session, by the folder you launch Claude from.** A `.claude/settings.json` in the project folder (or a parent) sets the target and role for every session started there. No settings file → the session uses the built-in default: **Public ACE, retrieval-only**.

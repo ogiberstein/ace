@@ -20,6 +20,7 @@
   "skills": [
     "./skills/capture",
     "./skills/doctor",
+    "./skills/invite",
     "./skills/login",
     "./skills/my-submissions",
     "./skills/publish",
