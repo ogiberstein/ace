@@ -36,7 +36,7 @@ The helper reads `ACE_REGISTRY_URL`, `ACE_TARGET_NAME`, `ACE_TARGET_KIND`, and `
 
    Preserve the same `--note` value, if any. Do not infer confirmation from the original `/ace:invite` request; confirmation happens after the resolved profile is displayed.
 
-4. On success, relay the helper's stdout packet to the admin **verbatim and in full**. Do not edit, reformat, summarize, fill the `<saved-file>` location, or regenerate either artifact. The helper owns the exact settings JSON and Bob-proof onboarding message.
+4. On success, relay the helper's stdout packet to the admin **verbatim and in full**. Do not edit, reformat, summarize, or regenerate either artifact. The helper owns the exact standalone settings JSON and the zero-placeholder, one-paste onboarding block; the colleague should paste that block rather than save or reconstruct the JSON manually.
 
 ## Upsert semantics
 

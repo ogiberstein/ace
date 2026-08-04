@@ -231,11 +231,14 @@ function createArtifacts(opts, env, profile) {
   JSON.parse(settingsJson);
 
   const message = [
-    "Run these four terminal lines:",
+    "Paste this whole terminal block:",
     "claude plugin update ace",
     "mkdir -p ~/team-ace/.claude",
-    "cp <saved-file> ~/team-ace/.claude/settings.json",
+    "cat > ~/team-ace/.claude/settings.json <<'ACE_SETTINGS_EOF'",
+    settingsJson,
+    "ACE_SETTINGS_EOF",
     "cd ~/team-ace && claude",
+    "This created a `team-ace` folder in your home directory — that's your team workspace: start Claude from there (`cd ~/team-ace && claude`) whenever you want team ACE; sessions started elsewhere use public ACE.",
     "",
     "Then, inside Claude Code:",
     "/ace:login",
@@ -321,6 +324,28 @@ function runChild(args, env) {
   });
 }
 
+function runShell(script, env, cwd) {
+  return new Promise((resolve, reject) => {
+    const child = spawn("/bin/sh", ["-c", script], { env: { ...process.env, ...env }, cwd, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("error", reject);
+    child.on("close", (status) => resolve({ status, stdout, stderr }));
+  });
+}
+
+function terminalBlockFromMessage(message) {
+  const first = "claude plugin update ace";
+  const last = "cd ~/team-ace && claude";
+  const start = message.indexOf(first);
+  const end = message.indexOf(last, start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  return message.slice(start, end + last.length);
+}
+
 async function withFixtureServer(handler) {
   const requests = [];
   const server = http.createServer((req, res) => {
@@ -402,7 +427,8 @@ async function selftest() {
       const post = requests.find((req) => req.method === "POST");
       assert.equal(post.auth, `Bearer ${sentinel}`);
       assert.deepEqual(JSON.parse(post.body), { github_user_id: 583231, github_login: "octocat", note: "colleague" });
-      const settings = JSON.parse(extractBetween(success.stdout, SETTINGS_START, SETTINGS_END));
+      const settingsJson = extractBetween(success.stdout, SETTINGS_START, SETTINGS_END);
+      const settings = JSON.parse(settingsJson);
       assert.deepEqual(settings.env, {
         ACE_REGISTRY_URL: base,
         ACE_TARGET_NAME: "ace-acme",
@@ -413,11 +439,14 @@ async function selftest() {
       });
       const message = extractBetween(success.stdout, MESSAGE_START, MESSAGE_END);
       assert.equal(message, [
-        "Run these four terminal lines:",
+        "Paste this whole terminal block:",
         "claude plugin update ace",
         "mkdir -p ~/team-ace/.claude",
-        "cp <saved-file> ~/team-ace/.claude/settings.json",
+        "cat > ~/team-ace/.claude/settings.json <<'ACE_SETTINGS_EOF'",
+        settingsJson,
+        "ACE_SETTINGS_EOF",
         "cd ~/team-ace && claude",
+        "This created a `team-ace` folder in your home directory — that's your team workspace: start Claude from there (`cd ~/team-ace && claude`) whenever you want team ACE; sessions started elsewhere use public ACE.",
         "",
         "Then, inside Claude Code:",
         "/ace:login",
@@ -426,7 +455,21 @@ async function selftest() {
         "The doctor result must say Team ACE ace-acme, submitter, and profile healthy.",
         "If it says Public ACE, stop and tell me.",
       ].join("\n"));
-      console.log("PASS confirmed invite sends correct POST and emits canonical settings + exact onboarding message without key bytes");
+
+      const pasteHome = path.join(tmp, "paste-home");
+      const shimDir = path.join(tmp, "paste-bin");
+      fs.mkdirSync(pasteHome, { recursive: true });
+      fs.mkdirSync(shimDir, { recursive: true });
+      const fakeClaude = path.join(shimDir, "claude");
+      fs.writeFileSync(fakeClaude, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      const paste = await runShell(terminalBlockFromMessage(message), {
+        HOME: pasteHome,
+        PATH: `${shimDir}:${process.env.PATH || ""}`,
+      }, tmp);
+      assert.equal(paste.status, 0, paste.stderr);
+      assert.equal(fs.readFileSync(path.join(pasteHome, "team-ace", ".claude", "settings.json"), "utf8"), `${settingsJson}\n`);
+      console.log("PASS confirmed invite sends correct POST and emits canonical settings + exact one-paste onboarding message without key bytes");
+      console.log("PASS emitted terminal block writes settings.json byte-identical to the reference JSON");
 
       const listed = await runChild(["--list"], common);
       assert.equal(listed.status, 0);
