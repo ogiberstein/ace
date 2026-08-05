@@ -3,6 +3,9 @@
 # Fails open (exit 0) on malformed input/transcript/state errors and emits at most
 # one one-line nudge per session marker plus one per cross-session cooldown window.
 # It does not inspect semantic relevance; the SessionStart snippet owns that judgment.
+# Delivery is stdout JSON {"decision":"block","reason":...} on exit 0 (renders as
+# "Stop hook feedback", not "Stop hook error"; same model re-engagement as the
+# previous stderr/exit-2 mechanism — see the 2026-08-05 spec addendum).
 set -euo pipefail
 
 is_disabled() {
@@ -64,8 +67,8 @@ case "$tool_count" in ''|*[!0-9]*) tool_count=0;; esac
 if [ "$line_count" -ge "20" ] && [ "$tool_count" -ge "3" ]; then
   { : > "$marker"; } 2>/dev/null || exit 0
   { : > "$cooldown_marker"; } 2>/dev/null || exit 0
-  echo "This session looks capsule-worthy. If it solved a reusable gotcha, draft it with /ace:capture --quick — nothing is submitted or published without your approval." >&2
-  exit 2
+  echo '{"decision":"block","reason":"This session looks capsule-worthy. If it solved a reusable gotcha, draft it with /ace:capture --quick — nothing is submitted or published without your approval."}'
+  exit 0
 fi
 
 exit 0
