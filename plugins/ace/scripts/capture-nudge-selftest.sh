@@ -33,7 +33,23 @@ write_substantive_transcript() {
   local path="$1"
   {
     echo "$CANARY"
-    for i in $(seq 1 24); do
+    for i in $(seq 1 64); do
+      case "$i" in
+        3) echo "tool_use Read fixture" ;;
+        8) echo "function_call Bash fixture" ;;
+        13) echo "Search fixture" ;;
+        *) echo "ordinary transcript line $i" ;;
+      esac
+    done
+  } > "$path"
+}
+
+# Crosses the pre-0.1.15 20-line floor (with tool mentions) but not the raised
+# 60-line floor — regression guard for the founder-requested later first nudge.
+write_midsize_transcript() {
+  local path="$1"
+  {
+    for i in $(seq 1 25); do
       case "$i" in
         3) echo "tool_use Read fixture" ;;
         8) echo "function_call Bash fixture" ;;
@@ -92,6 +108,11 @@ write_substantive_transcript "$substantive_c"
 
 expect_status_output 0 "" "$TMP/state-short" "$(payload_for "$short_transcript")" short-transcript
 pass "short/setup transcript stays silent"
+
+midsize_transcript="$TMP/midsize.jsonl"
+write_midsize_transcript "$midsize_transcript"
+expect_status_output 0 "" "$TMP/state-midsize" "$(payload_for "$midsize_transcript")" midsize-under-floor
+pass "midsize transcript (old 20-line floor) stays silent under the raised 60-line floor"
 
 state_once="$TMP/state-once"
 expect_status_output 0 "$APPROVED_JSON" "$state_once" "$(payload_for "$substantive_a")" substantive-first
@@ -220,6 +241,37 @@ if payload["reason"] != sys.argv[2]:
     raise SystemExit("reason is not byte-identical to the approved copy")
 PY
 pass "nudge JSON parses, decision=block, reason byte-identical, canary absent"
+
+# --- re-arm on transcript growth (0.1.15) ---
+state_rearm="$TMP/state-rearm"
+rearm_transcript="$TMP/rearm.jsonl"
+write_substantive_transcript "$rearm_transcript"
+expect_status_output 0 "$APPROVED_JSON" "$state_rearm" "$(payload_for "$rearm_transcript")" rearm-first
+rearm_marker="$state_rearm/rearm.jsonl.nudged"
+[ "$(cat "$rearm_marker")" = "65 1" ] || fail "re-arm marker format: expected '65 1', got '$(cat "$rearm_marker")'"
+for i in $(seq 1 100); do echo "ordinary growth line $i"; done >> "$rearm_transcript"
+expect_status_output 0 "" "$state_rearm" "$(payload_for "$rearm_transcript")" rearm-small-growth
+for i in $(seq 1 60); do echo "late-session line $i"; done >> "$rearm_transcript"
+expect_status_output 0 "$APPROVED_JSON" "$state_rearm" "$(payload_for "$rearm_transcript")" rearm-growth
+[ "$(cat "$rearm_marker")" = "225 2" ] || fail "re-arm marker after second nudge: expected '225 2', got '$(cat "$rearm_marker")'"
+[ -e "$state_rearm/.capture-nudge-cooldown" ] || fail "re-arm did not refresh cooldown marker"
+for i in $(seq 1 300); do echo "post-cap line $i"; done >> "$rearm_transcript"
+expect_status_output 0 "" "$state_rearm" "$(payload_for "$rearm_transcript")" rearm-cap
+pass "re-arm: silent under 3x growth, fires once at 3x despite fresh cooldown, caps at 2 per session"
+
+state_legacy="$TMP/state-legacy"
+mkdir -p "$state_legacy"
+legacy_transcript="$TMP/legacy.jsonl"
+write_substantive_transcript "$legacy_transcript"
+: > "$state_legacy/legacy.jsonl.nudged"
+expect_status_output 0 "" "$state_legacy" "$(payload_for "$legacy_transcript")" legacy-empty-marker
+state_malmarker="$TMP/state-malmarker"
+mkdir -p "$state_malmarker"
+malmarker_transcript="$TMP/malmarker.jsonl"
+write_substantive_transcript "$malmarker_transcript"
+echo "garbage not-a-number" > "$state_malmarker/malmarker.jsonl.nudged"
+expect_status_output 0 "" "$state_malmarker" "$(payload_for "$malmarker_transcript")" malformed-marker
+pass "legacy empty and malformed session markers fail closed (no nudge, no error)"
 
 python3 - "$ROOT/hooks/hooks.json" "$HOOK" <<'PY'
 import json
