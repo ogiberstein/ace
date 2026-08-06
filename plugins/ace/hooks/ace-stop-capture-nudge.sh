@@ -9,9 +9,10 @@
 # deliberately bypasses it (the session already proved substantive; same-session
 # bounding is the growth factor + MAX_NUDGES cap).
 # It does not inspect semantic relevance; the SessionStart snippet owns that judgment.
-# Delivery is stdout JSON {"decision":"block","reason":...} on exit 0 (renders as
-# "Stop hook feedback", not "Stop hook error"; same model re-engagement as the
-# previous stderr/exit-2 mechanism — see the 2026-08-05 spec addendum).
+# Delivery is stderr + exit 2 under an asyncRewake registration (hooks.json):
+# renders as "Stop hook feedback" (founder-verified live 2026-08-06) and wakes the
+# model with the copy. Plain command hooks render BOTH exit-2 stderr and JSON
+# decision:block as "Stop hook error" — see the 2026-08-06 spec addendum #3.
 set -euo pipefail
 
 MAX_NUDGES=2
@@ -59,8 +60,8 @@ emit_nudge() {
   local nudge_count="$1"
   { printf '%s %s\n' "$line_count" "$nudge_count" > "$marker"; } 2>/dev/null || exit 0
   { : > "$cooldown_marker"; } 2>/dev/null || exit 0
-  echo '{"decision":"block","reason":"This session looks capsule-worthy. If it solved a reusable gotcha, draft it with /ace:capture --quick — nothing is submitted or published without your approval."}'
-  exit 0
+  echo "This session looks capsule-worthy. If it solved a reusable gotcha, draft it with /ace:capture --quick — nothing is submitted or published without your approval." >&2
+  exit 2
 }
 
 if [ -e "$marker" ]; then

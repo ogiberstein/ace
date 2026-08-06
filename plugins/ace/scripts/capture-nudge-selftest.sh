@@ -4,7 +4,6 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOOK="$ROOT/hooks/ace-stop-capture-nudge.sh"
 APPROVED_COPY='This session looks capsule-worthy. If it solved a reusable gotcha, draft it with /ace:capture --quick — nothing is submitted or published without your approval.'
-APPROVED_JSON="{\"decision\":\"block\",\"reason\":\"$APPROVED_COPY\"}"
 CANARY='TRANSCRIPT_CANARY_NEVER_ECHO'
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/ace-capture-nudge-selftest.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
@@ -80,7 +79,7 @@ run_hook() {
 
 expect_status_output() {
   local expected_status="$1"
-  local expected_stdout="$2"
+  local expected_stderr="$2"
   local state_dir="$3"
   local payload="$4"
   local label="$5"
@@ -91,10 +90,10 @@ expect_status_output() {
   local status=$?
   set -e
   [ "$status" -eq "$expected_status" ] || fail "$label: expected status $expected_status, got $status; stderr=$(cat "$err")"
-  local actual_stdout
-  actual_stdout="$(cat "$out")"
-  [ "$actual_stdout" = "$expected_stdout" ] || fail "$label: unexpected stdout: <$actual_stdout>"
-  [ ! -s "$err" ] || fail "$label: stderr should be empty: $(cat "$err")"
+  [ ! -s "$out" ] || fail "$label: stdout should be empty: $(cat "$out")"
+  local actual_stderr
+  actual_stderr="$(cat "$err")"
+  [ "$actual_stderr" = "$expected_stderr" ] || fail "$label: unexpected stderr: <$actual_stderr>"
 }
 
 short_transcript="$TMP/short.jsonl"
@@ -115,7 +114,7 @@ expect_status_output 0 "" "$TMP/state-midsize" "$(payload_for "$midsize_transcri
 pass "midsize transcript (old 20-line floor) stays silent under the raised 60-line floor"
 
 state_once="$TMP/state-once"
-expect_status_output 0 "$APPROVED_JSON" "$state_once" "$(payload_for "$substantive_a")" substantive-first
+expect_status_output 2 "$APPROVED_COPY" "$state_once" "$(payload_for "$substantive_a")" substantive-first
 [ -e "$state_once/$(basename "$substantive_a").nudged" ] || fail "same-session marker not written"
 [ -e "$state_once/.capture-nudge-cooldown" ] || fail "cooldown marker not written"
 pass "substantive transcript nudges once and writes markers"
@@ -133,9 +132,9 @@ set +e
 )
 status=$?
 set -e
-[ "$status" -eq 0 ] || fail "per-user state dir: expected status 0, got $status; stderr=$(cat "$err")"
-[ "$(cat "$out")" = "$APPROVED_JSON" ] || fail "per-user state dir: nudge JSON changed"
-[ ! -s "$err" ] || fail "per-user state dir: stderr should be empty: $(cat "$err")"
+[ "$status" -eq 2 ] || fail "per-user state dir: expected status 2, got $status; stderr=$(cat "$err")"
+[ "$(cat "$err")" = "$APPROVED_COPY" ] || fail "per-user state dir: nudge copy changed"
+[ ! -s "$out" ] || fail "per-user state dir: stdout should be empty: $(cat "$out")"
 [ -e "$expected_default_state/$(basename "$substantive_b").nudged" ] || fail "per-user state marker missing at $expected_default_state"
 [ ! -e "$default_tmp/ace-capture-nudge/$(basename "$substantive_b").nudged" ] || fail "machine-global state marker was written"
 pass "state dir is per-user"
@@ -159,10 +158,10 @@ expect_status_output 0 "" "$state_once" "$(payload_for "$substantive_a")" substa
 pass "same-session marker suppresses repeat nudge"
 
 state_cooldown="$TMP/state-cooldown"
-expect_status_output 0 "$APPROVED_JSON" "$state_cooldown" "$(payload_for "$substantive_a")" cooldown-first
+expect_status_output 2 "$APPROVED_COPY" "$state_cooldown" "$(payload_for "$substantive_a")" cooldown-first
 expect_status_output 0 "" "$state_cooldown" "$(payload_for "$substantive_b")" cooldown-fresh-session
 perl -e 'my $t = time - 5 * 3600; utime $t, $t, $ARGV[0] or die "utime failed: $!\n"' "$state_cooldown/.capture-nudge-cooldown"
-expect_status_output 0 "$APPROVED_JSON" "$state_cooldown" "$(payload_for "$substantive_c")" cooldown-expired
+expect_status_output 2 "$APPROVED_COPY" "$state_cooldown" "$(payload_for "$substantive_c")" cooldown-expired
 pass "cross-session cooldown suppresses then re-arms after expiry"
 
 state_zero_padded="$TMP/state-zero-padded"
@@ -225,34 +224,23 @@ expect_status_output 0 "" "$TMP/state-malformed" '{not-json' malformed-payload
 expect_status_output 0 "" "$TMP/state-unreadable" '{"transcript_path":"/definitely/missing/ace-transcript.jsonl","stop_hook_active":false}' unreadable-transcript
 pass "stop_hook_active, malformed payload, and unreadable transcript fail open"
 
-expect_status_output 0 "$APPROVED_JSON" "$TMP/state-copy" "$(payload_for "$substantive_a")" copy-check
+expect_status_output 2 "$APPROVED_COPY" "$TMP/state-copy" "$(payload_for "$substantive_a")" copy-check
 if grep -R "$CANARY" "$TMP/state-copy" "$TMP/copy-check.out" "$TMP/copy-check.err" >/dev/null 2>&1; then
   fail "transcript canary appeared in hook output or marker state"
 fi
-python3 - "$TMP/copy-check.out" "$APPROVED_COPY" <<'PY'
-import json, sys
-with open(sys.argv[1], encoding="utf-8") as f:
-    payload = json.load(f)
-if set(payload.keys()) != {"decision", "reason"}:
-    raise SystemExit(f"unexpected JSON keys: {sorted(payload.keys())}")
-if payload["decision"] != "block":
-    raise SystemExit(f"decision must be 'block', got: {payload['decision']!r}")
-if payload["reason"] != sys.argv[2]:
-    raise SystemExit("reason is not byte-identical to the approved copy")
-PY
-pass "nudge JSON parses, decision=block, reason byte-identical, canary absent"
+pass "nudge copy is byte-identical on stderr and transcript canary is absent"
 
 # --- re-arm on transcript growth (0.1.15) ---
 state_rearm="$TMP/state-rearm"
 rearm_transcript="$TMP/rearm.jsonl"
 write_substantive_transcript "$rearm_transcript"
-expect_status_output 0 "$APPROVED_JSON" "$state_rearm" "$(payload_for "$rearm_transcript")" rearm-first
+expect_status_output 2 "$APPROVED_COPY" "$state_rearm" "$(payload_for "$rearm_transcript")" rearm-first
 rearm_marker="$state_rearm/rearm.jsonl.nudged"
 [ "$(cat "$rearm_marker")" = "65 1" ] || fail "re-arm marker format: expected '65 1', got '$(cat "$rearm_marker")'"
 for i in $(seq 1 100); do echo "ordinary growth line $i"; done >> "$rearm_transcript"
 expect_status_output 0 "" "$state_rearm" "$(payload_for "$rearm_transcript")" rearm-small-growth
 for i in $(seq 1 60); do echo "late-session line $i"; done >> "$rearm_transcript"
-expect_status_output 0 "$APPROVED_JSON" "$state_rearm" "$(payload_for "$rearm_transcript")" rearm-growth
+expect_status_output 2 "$APPROVED_COPY" "$state_rearm" "$(payload_for "$rearm_transcript")" rearm-growth
 [ "$(cat "$rearm_marker")" = "225 2" ] || fail "re-arm marker after second nudge: expected '225 2', got '$(cat "$rearm_marker")'"
 [ -e "$state_rearm/.capture-nudge-cooldown" ] || fail "re-arm did not refresh cooldown marker"
 for i in $(seq 1 300); do echo "post-cap line $i"; done >> "$rearm_transcript"
@@ -295,9 +283,11 @@ if len(matching) != 1:
     raise SystemExit("expected exactly one Stop hook registration for ace-stop-capture-nudge.sh")
 if matching[0].get("timeout") != 10:
     raise SystemExit("Stop hook registration must set timeout=10")
+if matching[0].get("asyncRewake") is not True:
+    raise SystemExit("Stop hook registration must set asyncRewake=true (renders 'Stop hook feedback', not 'Stop hook error')")
 if not os.path.isfile(hook_path) or not os.access(hook_path, os.X_OK):
     raise SystemExit("Stop hook script is missing or not executable")
 PY
-pass "hooks.json registers executable Stop hook with timeout 10"
+pass "hooks.json registers executable asyncRewake Stop hook with timeout 10"
 
 echo "PASS: $pass_count capture-nudge selftests"
