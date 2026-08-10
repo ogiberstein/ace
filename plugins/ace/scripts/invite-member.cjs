@@ -232,7 +232,8 @@ function createArtifacts(opts, env, profile) {
 
   const message = [
     "Paste this whole terminal block:",
-    "claude plugin update ace",
+    "claude plugin marketplace add ogiberstein/ace --sparse .claude-plugin plugins || claude plugin marketplace update ace",
+    "claude plugin install ace || claude plugin update ace@ace",
     "mkdir -p ~/team-ace/.claude",
     "cat > ~/team-ace/.claude/settings.json <<'ACE_SETTINGS_EOF'",
     settingsJson,
@@ -337,7 +338,7 @@ function runShell(script, env, cwd) {
 }
 
 function terminalBlockFromMessage(message) {
-  const first = "claude plugin update ace";
+  const first = "claude plugin marketplace add ogiberstein/ace --sparse .claude-plugin plugins || claude plugin marketplace update ace";
   const last = "cd ~/team-ace && claude";
   const start = message.indexOf(first);
   const end = message.indexOf(last, start);
@@ -440,7 +441,8 @@ async function selftest() {
       const message = extractBetween(success.stdout, MESSAGE_START, MESSAGE_END);
       assert.equal(message, [
         "Paste this whole terminal block:",
-        "claude plugin update ace",
+        "claude plugin marketplace add ogiberstein/ace --sparse .claude-plugin plugins || claude plugin marketplace update ace",
+        "claude plugin install ace || claude plugin update ace@ace",
         "mkdir -p ~/team-ace/.claude",
         "cat > ~/team-ace/.claude/settings.json <<'ACE_SETTINGS_EOF'",
         settingsJson,
