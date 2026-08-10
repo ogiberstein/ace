@@ -5,16 +5,16 @@
       "command": "node",
       "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/mcp-server.cjs"],
       "env": {
-        "ACE_REGISTRY_URL": "${ACE_REGISTRY_URL}",
-        "ACE_TARGET_NAME": "${ACE_TARGET_NAME}",
-        "ACE_TARGET_KIND": "${ACE_TARGET_KIND}",
-        "ACE_ROLE": "${ACE_ROLE}",
-        "ACE_TOKEN_FILE": "${ACE_TOKEN_FILE}",
-        "ACE_PUBLISH_KEY_FILE": "${ACE_PUBLISH_KEY_FILE}",
-        "ACE_SUBMIT_MODE": "${ACE_SUBMIT_MODE}",
-        "ACE_ADMIN_MODE": "${ACE_ADMIN_MODE}",
-        "ACE_EXPOSE_GET": "${ACE_EXPOSE_GET}",
-        "ACE_PROFILE_LAUNCHED": "${ACE_PROFILE_LAUNCHED}"
+        "ACE_REGISTRY_URL": "${ACE_REGISTRY_URL:-}",
+        "ACE_TARGET_NAME": "${ACE_TARGET_NAME:-}",
+        "ACE_TARGET_KIND": "${ACE_TARGET_KIND:-}",
+        "ACE_ROLE": "${ACE_ROLE:-}",
+        "ACE_TOKEN_FILE": "${ACE_TOKEN_FILE:-}",
+        "ACE_PUBLISH_KEY_FILE": "${ACE_PUBLISH_KEY_FILE:-}",
+        "ACE_SUBMIT_MODE": "${ACE_SUBMIT_MODE:-}",
+        "ACE_ADMIN_MODE": "${ACE_ADMIN_MODE:-}",
+        "ACE_EXPOSE_GET": "${ACE_EXPOSE_GET:-}",
+        "ACE_PROFILE_LAUNCHED": "${ACE_PROFILE_LAUNCHED:-}"
       }
     }
   }
