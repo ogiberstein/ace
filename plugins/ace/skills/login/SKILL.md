@@ -1,5 +1,5 @@
 ---
-name: ACE login
+name: login
 description: Manual ACE registry authentication via GitHub device flow. Run only with the namespaced Claude Code command `/ace:login`; never use bare `/login`, which is reserved for Claude Code's native Anthropic login.
 disable-model-invocation: true
 ---

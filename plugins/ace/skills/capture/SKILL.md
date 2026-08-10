@@ -45,7 +45,7 @@ If the audit is incomplete, or the founder has not accepted the soft/non-standar
 `claim_class` guidance:
 - Use `stable_behavior` for stable protocol/HTTP/OS/algorithmic gotchas.
 - Use `public_issue_gotcha` for normal public issue-backed gotchas.
-- Use `tool_bug_version_pinned` only for current/fast-moving tool bugs tied to versions/platforms; include `platform_scope`, `applies_to_versions`, and a meaningful `## When this stops applying` section.
+- Use `tool_bug_version_pinned` only for current/fast-moving tool bugs tied to versions/platforms; include `platform_scope`, `applies_to_versions`, and a meaningful `## When this stops applying` section. `platform_scope` must be a YAML **list** of short tokens (`platform_scope: [macos, linux]`, per `CAPSULE_SCHEMA.md`) — a plain string currently draws a registry-side error on submit.
 
 Do not hand-author a full `freshness_assessment` unless you know the registry schema. `/ace:publish <draft> public` and `ace publish --dry-run <draft>` generate the stable-behavior assessment or return a complete blocker checklist.
 
